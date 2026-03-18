@@ -604,6 +604,8 @@ def main():
         r"(?i)(" + "|".join(re.escape(p) for p in exclude_patterns) + ")"
     ) if exclude_patterns else None
 
+    channel_filters = profile.get("channel_filters", {})
+
     filtered = []
     for v in candidates:
         # 排除入门教程/全课程
@@ -614,6 +616,25 @@ def main():
         is_preferred = any(pc.lower() in v["author"].lower() for pc in preferred_channels)
         if v["view_count"] < 200 and not is_preferred:
             print(f"   ⛔ 预过滤（低播放量非常看频道）: {v['title']} ({format_view_count(v['view_count'])} views)")
+            continue
+        # 频道专属过滤规则
+        channel_skipped = False
+        for ch_name, ch_rule in channel_filters.items():
+            if ch_name.lower() not in v["author"].lower():
+                continue
+            min_duration = ch_rule.get("min_duration_seconds", 0)
+            if min_duration and v.get("duration_seconds", 0) < min_duration:
+                print(f"   ⛔ 预过滤（{ch_name} 时长过短）: {v['title']}")
+                channel_skipped = True
+                break
+            require_keywords = ch_rule.get("require_title_keywords", [])
+            if require_keywords:
+                kw_re = re.compile(r"(?i)(" + "|".join(re.escape(k) for k in require_keywords) + ")")
+                if not kw_re.search(v["title"]):
+                    print(f"   ⛔ 预过滤（{ch_name} 非目标内容）: {v['title']}")
+                    channel_skipped = True
+                    break
+        if channel_skipped:
             continue
         filtered.append(v)
 
