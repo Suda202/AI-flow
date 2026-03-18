@@ -325,6 +325,12 @@ def rank_candidates(candidates: list[dict], top_n: int, profile: dict) -> list[d
 - 涉及以下话题的内容：{topics_str}
 """
 
+    channel_notes = profile.get("channel_notes", {})
+    channel_notes_section = ""
+    if channel_notes:
+        lines = "\n".join(f"- {ch}：{note}" for ch, note in channel_notes.items())
+        channel_notes_section = f"\n特定频道偏好：\n{lines}\n"
+
     prompt = f"""你是一个视频筛选助手。请严格按照以下标准筛选。
 
 用户画像：
@@ -351,6 +357,7 @@ def rank_candidates(candidates: list[dict], top_n: int, profile: dict) -> list[d
 - 播放量极低（<200）且频道不在用户常看列表中的视频
 {deprioritize_section}
 播放量参考规则：同类深度内容中播放量明显更高的优先，但绝不因为播放量高就选新闻速报。
+{channel_notes_section}
 
 请按推荐度从高到低输出，每行一个，格式为：
 编号|一句话推荐理由
