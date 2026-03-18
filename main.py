@@ -263,7 +263,7 @@ def call_llm(prompt: str, max_tokens: int = 1024) -> str | None:
                 "anthropic-version": "2023-06-01",
             },
             json={
-                "model": "MiniMax-M2.1",
+                "model": "MiniMax-M2.5",
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}],
             },
