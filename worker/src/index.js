@@ -178,7 +178,7 @@ async function handleRequest(request, env, ctx) {
     return jsonResponse({ status: "ignored" });
   }
 
-  ctx.waitUntil(recordFeedback(env, feedbackData));
+  await recordFeedback(env, feedbackData);
   const label = feedbackData.reaction === "like" ? "已记录：有用" : "已记录：不想看";
   return jsonResponse({
     status: "ok",
