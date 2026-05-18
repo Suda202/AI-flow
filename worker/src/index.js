@@ -175,15 +175,12 @@ async function handleRequest(request, env, ctx) {
 
   const feedbackData = extractFeedback(payload);
   if (!feedbackData) {
-    return jsonResponse({ status: "ignored" });
+    return jsonResponse({});
   }
 
   await recordFeedback(env, feedbackData);
   const label = feedbackData.reaction === "like" ? "已记录：有用" : "已记录：不想看";
-  return jsonResponse({
-    status: "ok",
-    toast: { type: "success", content: label },
-  });
+  return jsonResponse({ toast: { type: "success", content: label } });
 }
 
 export default {
