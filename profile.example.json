@@ -1,20 +1,41 @@
 {
-  "description": "AI/科技行业从业者，关注 AI 技术前沿、创业、投资、产品策略",
-  "favorite_content": "创始人/研究者深度访谈、行业大会演讲（AI Engineer Summit 等）、技术架构深度讨论",
+  "description": "AI 产品经理，优先关注 AI 产品设计、用户体验、商业化、AI 工作流和产品策略；不主动追投资、股票、VC 视角或纯技术细节。",
+  "favorite_content": "少而精：AI 产品/UX/商业化案例、广告创意智能体、海外 SaaS 增长、产品策略与竞品分析、技术团队管理实践。偏好能转化为产品判断的高密度内容。",
+  "max_daily_videos": 3,
   "preferred_channels": [
     "AI Engineer",
     "Lenny's Podcast",
-    "a16z",
-    "Lex Fridman",
-    "Y Combinator",
-    "Andrej Karpathy",
+    "Peter Yang",
+    "Hamel Husain",
+    "Latent Space",
     "OpenAI",
-    "Anthropic"
+    "Anthropic",
+    "Figma"
   ],
   "exclude_title_patterns": [
     "full course",
     "tutorial for beginners",
+    "for beginners",
+    "paper reading",
+    "arxiv",
+    "implementation",
+    "stock",
+    "investing",
+    "venture capital",
+    "fundraising",
+    "valuation",
     "从零开始",
     "入门教程"
+  ],
+  "deprioritize_topics": [
+    "vc投资",
+    "投资分析",
+    "融资",
+    "估值",
+    "股票",
+    "论文精读",
+    "代码实现",
+    "模型架构细节",
+    "框架/API 教程"
   ]
 }

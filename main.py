@@ -25,7 +25,9 @@ MINIMAX_API_BASE = os.environ.get("MINIMAX_API_BASE", "https://api.minimaxi.com/
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 MIN_DURATION_MINUTES = int(os.environ.get("MIN_DURATION_MINUTES", "3"))  # 过滤 Shorts（<=3min）
-TOP_N = int(os.environ.get("TOP_N", "5"))  # 每日推送 Top N 视频
+TOP_N = int(os.environ.get("TOP_N", "3"))  # 每日推送 Top N 视频
+SUMMARY_MAX_TOKENS = int(os.environ.get("SUMMARY_MAX_TOKENS", "700"))
+SUMMARY_MAX_CHARS = int(os.environ.get("SUMMARY_MAX_CHARS", "700"))
 LOOKBACK_HOURS = int(os.environ.get("LOOKBACK_HOURS", "24"))
 CHANNELS_FILE = os.environ.get("CHANNELS_FILE", "channels.json")
 PROFILE_FILE = os.environ.get("PROFILE_FILE", "profile.json")
@@ -56,6 +58,15 @@ def load_profile() -> dict:
         }
     with open(path) as f:
         return json.load(f)
+
+
+def get_digest_top_n(profile: dict) -> int:
+    """TOP_N env has priority; otherwise profile can lower the daily volume."""
+    raw_value = os.environ.get("TOP_N", profile.get("max_daily_videos", TOP_N))
+    try:
+        return max(1, int(raw_value))
+    except (TypeError, ValueError):
+        return TOP_N
 
 
 def load_history() -> dict:
@@ -229,7 +240,7 @@ def summarize_with_llm(title: str, author: str, content: str, content_type: str 
     if len(content) > 80000:
         content = content[:80000] + "\n...[truncated]"
 
-    prompt = f"""根据以下视频{content_type}，生成简洁的中文摘要。
+    prompt = f"""根据以下视频{content_type}，生成一份便于快速判断是否值得观看的中文短摘要。
 
 视频标题：{title}
 频道：{author}
@@ -238,13 +249,14 @@ def summarize_with_llm(title: str, author: str, content: str, content_type: str 
 {content}
 
 格式要求（纯文本，不要 markdown）：
-- 开头一段话概括核心内容，点明嘉宾身份和讨论主题
-- 用（1）（2）（3）编号列出 3-6 个要点，冒号前是具体关键词或概念名（如"三月法则"、"投资机遇"、"范式转移"），冒号后一句话提炼核心信息
-- 要点必须是实质性观点和具体洞察，不要空泛描述
-- 结尾一句推荐语，说明适合谁看、能获得什么启发
-- 不要出现"一句话总结"、"关键要点"、"总结"等格式标签"""
+- 第一行用"结论："开头，用一句话说明这条视频最值得看的观点
+- 用（1）（2）（3）编号列出最多 3 个要点，每条不超过 45 个中文字符
+- 优先提炼产品策略、用户洞察、商业化、AI 应用趋势、创意/广告智能体相关内容
+- 不展开融资、估值、股票、基金、代码实现、模型架构、API 参数等细节；如果无法避开，只用一句话带过
+- 最后一行用"适合："开头，说明适合什么场景下观看
+- 全文控制在 350 个中文字符以内，不要出现"一句话总结"、"关键要点"、"总结"等格式标签"""
 
-    result = call_llm(prompt)
+    result = call_llm(prompt, max_tokens=SUMMARY_MAX_TOKENS)
     if result:
         return {"summary": result}
     return {"summary": "摘要生成失败"}
@@ -317,12 +329,17 @@ def rank_candidates(candidates: list[dict], top_n: int, profile: dict) -> list[d
 
     preferred = ", ".join(profile.get("preferred_channels", []))
     deprioritize = profile.get("deprioritize_topics", [])
+    deprioritize_channels = profile.get("deprioritize_channels", [])
     deprioritize_section = ""
     if deprioritize:
         topics_str = "、".join(deprioritize)
         deprioritize_section = f"""
 降低优先级（除非内容特别有深度，否则尽量不选）：
 - 涉及以下话题的内容：{topics_str}
+"""
+    if deprioritize_channels:
+        channels_str = "、".join(deprioritize_channels)
+        deprioritize_section += f"""- 来自以下偏投资/偏技术频道的内容：{channels_str}
 """
 
     channel_notes = profile.get("channel_notes", {})
@@ -342,19 +359,24 @@ def rank_candidates(candidates: list[dict], top_n: int, profile: dict) -> list[d
 
 {chr(10).join(video_list)}
 
-请从中选出最值得深度观看的 {top_n} 个视频。
+请从中选出最多 {top_n} 个最值得深度观看的视频。宁缺毋滥：如果达不到标准，可以少选。
 
 必须优先选择：
-1. 有深度的一对一访谈或圆桌讨论（创始人、研究者、投资人的一手观点）
-2. 行业大会的主题演讲或技术分享
-3. 对 AI 技术、产品策略、商业模式有实质性深度分析的内容
-4. 来自用户常看频道的高质量内容
+1. AI 产品设计、用户体验设计、产品增长与商业化案例、产品策略与竞品分析（优先级最高）
+2. 广告创意智能体、AI 工作流、面向海外客户的 SaaS/增长案例
+3. 技术团队管理实践、工程师文化，但必须是管理和协作视角
+4. 有深度的一对一访谈或圆桌讨论（创始人、研究者、产品负责人一手观点）
+5. 行业大会中面向产品、应用、战略的主题演讲
+6. 来自用户常看频道的高质量内容
 
 必须排除（即使播放量高也不选）：
 - 纯新闻汇总/速报类（"AI News", "XX is HERE", "XX is INSANE" 等标题党）
 - 入门教程/全课程（"Full Course", "Tutorial For Beginners", "从零开始"）
+- 纯投资、融资、估值、股票、基金、宏观市场、VC 观点输出
+- 纯技术细节：论文精读、代码实现、模型架构、框架/API 教程、RAG/向量库调参
 - 与 AI/科技行业无关的内容（情感、健身、烹饪等）
 - 播放量极低（<200）且频道不在用户常看列表中的视频
+- 低信息密度内容：纯开场致辞（welcome, opening）、纯 announcements、纯回顾/ recap、无实质观点的访谈预热
 {deprioritize_section}
 播放量参考规则：同类深度内容中播放量明显更高的优先，但绝不因为播放量高就选新闻速报。
 {channel_notes_section}
@@ -363,11 +385,11 @@ def rank_candidates(candidates: list[dict], top_n: int, profile: dict) -> list[d
 编号|一句话推荐理由
 
 例如：
-3|Meta AI 研究负责人的一手观点，讨论 AI 记忆和规划的前沿方向
-7|a16z 深度访谈，揭示 ElevenLabs 从 0 到 110 亿美元的增长策略
-1|YC 圆桌讨论 Claude Code 的实际使用体验和开发者工作流变化
+3|一线产品负责人复盘 AI 功能商业化，和你的产品方向直接相关
+7|创始人分享广告创意工作流变化，适合提炼智能体机会
+1|Claude Code 团队讨论开发者工作流，但重点在产品体验而非代码细节
 
-只输出 {top_n} 行，不要其他文字。"""
+最多输出 {top_n} 行，不要其他文字。"""
 
     result = call_gemini(prompt)
     if not result:
@@ -435,6 +457,15 @@ def format_view_count(count: int) -> str:
     return str(count)
 
 
+def trim_summary(summary: str) -> str:
+    """Keep Feishu cards readable even when the LLM ignores length guidance."""
+    text = (summary or "").strip()
+    if len(text) <= SUMMARY_MAX_CHARS:
+        return text
+    trimmed = text[:SUMMARY_MAX_CHARS].rsplit("\n", 1)[0].strip()
+    return f"{trimmed}\n...（摘要已截断）"
+
+
 def build_card_content(videos_with_summaries: list[dict]) -> dict:
     """构建飞书卡片消息内容，返回卡片 JSON 结构"""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -442,7 +473,7 @@ def build_card_content(videos_with_summaries: list[dict]) -> dict:
 
     for i, item in enumerate(videos_with_summaries, 1):
         v = item["video"]
-        summary = item["summary"]
+        summary = trim_summary(item["summary"])
         view_str = format_view_count(v["view_count"])
 
         elements.append({"tag": "hr"})
@@ -533,7 +564,6 @@ def send_digest_to_webhook(videos_with_summaries: list[dict]):
 # ============ 主流程 ============
 def main():
     print(f"🚀 YouTube Digest 启动 - {datetime.now(timezone.utc).isoformat()}")
-    print(f"   过滤: 非 Shorts (>{MIN_DURATION_MINUTES}min), 最近 {LOOKBACK_HOURS}h, Top {TOP_N}\n")
 
     channels = load_channels()
     if not channels:
@@ -541,6 +571,8 @@ def main():
         return
 
     profile = load_profile()
+    top_n = get_digest_top_n(profile)
+    print(f"   过滤: 非 Shorts (>{MIN_DURATION_MINUTES}min), 最近 {LOOKBACK_HOURS}h, Top {top_n}\n")
     history = load_history()
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -610,14 +642,23 @@ def main():
     exclude_re = re.compile(
         r"(?i)(" + "|".join(re.escape(p) for p in exclude_patterns) + ")"
     ) if exclude_patterns else None
+    exclude_content_patterns = profile.get("exclude_content_patterns", [])
+    exclude_content_re = re.compile(
+        r"(?i)(" + "|".join(re.escape(p) for p in exclude_content_patterns) + ")"
+    ) if exclude_content_patterns else None
 
     channel_filters = profile.get("channel_filters", {})
 
     filtered = []
     for v in candidates:
-        # 排除入门教程/全课程
+        # 排除教程、投资金融、纯技术实现等明确不感兴趣的标题
         if exclude_re and exclude_re.search(v["title"]):
-            print(f"   ⛔ 预过滤（教程）: {v['title']}")
+            print(f"   ⛔ 预过滤（标题排除）: {v['title']}")
+            continue
+        # 排除标题/描述中明显偏投资或偏纯技术的内容
+        content_text = f"{v['title']}\n{v.get('description') or ''}"
+        if exclude_content_re and exclude_content_re.search(content_text):
+            print(f"   ⛔ 预过滤（不感兴趣主题）: {v['title']}")
             continue
         # 播放量极低且不是常看频道 → 排除
         is_preferred = any(pc.lower() in v["author"].lower() for pc in preferred_channels)
@@ -630,10 +671,25 @@ def main():
             if ch_name.lower() not in v["author"].lower():
                 continue
             min_duration = ch_rule.get("min_duration_seconds", 0)
-            if min_duration and v.get("duration_seconds", 0) < min_duration:
+            duration_value = v.get("duration_sec", v.get("duration_seconds", 0))
+            if min_duration and duration_value < min_duration:
                 print(f"   ⛔ 预过滤（{ch_name} 时长过短）: {v['title']}")
                 channel_skipped = True
                 break
+            exclude_keywords = ch_rule.get("exclude_title_keywords", [])
+            if exclude_keywords:
+                kw_re = re.compile(r"(?i)(" + "|".join(re.escape(k) for k in exclude_keywords) + ")")
+                if kw_re.search(v["title"]):
+                    print(f"   ⛔ 预过滤（{ch_name} 排除主题）: {v['title']}")
+                    channel_skipped = True
+                    break
+            exclude_description_keywords = ch_rule.get("exclude_description_keywords", [])
+            if exclude_description_keywords:
+                kw_re = re.compile(r"(?i)(" + "|".join(re.escape(k) for k in exclude_description_keywords) + ")")
+                if kw_re.search(v.get("description") or ""):
+                    print(f"   ⛔ 预过滤（{ch_name} 描述排除主题）: {v['title']}")
+                    channel_skipped = True
+                    break
             require_keywords = ch_rule.get("require_title_keywords", [])
             if require_keywords:
                 kw_re = re.compile(r"(?i)(" + "|".join(re.escape(k) for k in require_keywords) + ")")
@@ -653,8 +709,8 @@ def main():
     if len(filtered) < len(candidates):
         print(f"   📋 预过滤: {len(candidates)} → {len(filtered)} 个候选")
 
-    print(f"\n🤖 LLM 正在从 {len(filtered)} 个候选中筛选 Top {TOP_N}...")
-    ranked = rank_candidates(filtered, TOP_N, profile)
+    print(f"\n🤖 LLM 正在从 {len(filtered)} 个候选中筛选 Top {top_n}...")
+    ranked = rank_candidates(filtered, top_n, profile)
     top_videos = [filtered[r["index"]] for r in ranked]
     # 把推荐理由挂到 video 上
     for r, v in zip(ranked, top_videos):
