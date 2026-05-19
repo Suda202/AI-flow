@@ -70,9 +70,9 @@ export GEMINI_API_KEY="xxxxx"
 export YOUTUBE_API_KEY="AIzaXxx"
 ```
 
-## 七、配置点击反馈链接
+## 七、配置点击反馈回调
 
-点击反馈通过 `worker/` 下的 Cloudflare Worker/Pages 接收。飞书按钮使用链接打开反馈页，避免依赖飞书卡片回调转发：
+点击反馈通过 `worker/` 下的 Cloudflare Worker/Pages 接收。Worker 会先给飞书返回成功提示，再异步写入 GitHub，避免回调超过飞书超时限制：
 
 ```bash
 cd worker
@@ -80,13 +80,11 @@ wrangler secret put GH_TOKEN
 wrangler deploy
 ```
 
-默认反馈地址：
+然后在飞书开放平台应用里配置卡片回调地址：
 
 ```text
 https://youtube-digest-feedback-pages.pages.dev/
 ```
-
-如需替换地址，设置环境变量 `FEEDBACK_CALLBACK_URL`。
 
 Worker 会把点击反馈写入 GitHub `data` 分支的 `feedback.json`。GitHub Actions 每次运行前会执行 `update_preferences.py`，生成 `ranking_hints.txt` 并注入排序 prompt。
 
@@ -102,5 +100,5 @@ Worker 会把点击反馈写入 GitHub `data` 分支的 `feedback.json`。GitHub
 
 ## 建议
 
-- **需要点击反馈**：推荐用开放平台应用机器人发送卡片，按钮会打开反馈链接并记录偏好
+- **需要点击反馈**：必须用开放平台应用机器人发送卡片，并配置卡片回调地址
 - **只需要单向通知**：可以保留 `FEISHU_WEBHOOK_URL` 作为兜底

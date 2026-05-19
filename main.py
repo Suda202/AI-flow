@@ -14,7 +14,6 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlencode
 
 # ============ 配置 ============
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "")
@@ -22,7 +21,6 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
 FEISHU_USER_ID = os.environ.get("FEISHU_USER_ID", "")  # 目标用户 ID (ou_xxxxx)
 FEISHU_CHAT_ID = os.environ.get("FEISHU_CHAT_ID", "")  # 目标群 ID (oc_xxxxx)
 FEISHU_WEBHOOK_URL = os.environ.get("FEISHU_WEBHOOK_URL", "")  # 群自定义机器人 Webhook（仅兜底，无点击回调）
-FEEDBACK_CALLBACK_URL = os.environ.get("FEEDBACK_CALLBACK_URL", "https://youtube-digest-feedback-pages.pages.dev/")
 MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_API_BASE = os.environ.get("MINIMAX_API_BASE", "https://api.minimaxi.com/anthropic")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -477,12 +475,6 @@ def trim_summary(summary: str) -> str:
     return f"{trimmed}\n...（摘要已截断）"
 
 
-def build_feedback_url(feedback_meta: dict, action: str) -> str:
-    base_url = FEEDBACK_CALLBACK_URL.rstrip("/")
-    params = urlencode({**feedback_meta, "action": action})
-    return f"{base_url}/?{params}"
-
-
 def build_card_content(videos_with_summaries: list[dict], enable_feedback: bool = False) -> dict:
     """构建飞书卡片消息内容，返回卡片 JSON 结构"""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -515,20 +507,20 @@ def build_card_content(videos_with_summaries: list[dict], enable_feedback: bool 
                 "author": v["author"],
                 "url": v["url"],
             }
-            like_url = build_feedback_url(feedback_meta, "like")
-            dislike_url = build_feedback_url(feedback_meta, "dislike")
             actions.extend([
                 {
                     "tag": "button",
                     "text": {"tag": "plain_text", "content": "👍 有用"},
                     "type": "primary",
-                    "url": like_url,
+                    "name": f"feedback_like_{v['video_id']}",
+                    "value": {**feedback_meta, "action": "like"},
                 },
                 {
                     "tag": "button",
                     "text": {"tag": "plain_text", "content": "👎 不想看"},
                     "type": "secondary",
-                    "url": dislike_url,
+                    "name": f"feedback_dislike_{v['video_id']}",
+                    "value": {**feedback_meta, "action": "dislike"},
                 },
             ])
         elements.append({"tag": "action", "actions": actions})

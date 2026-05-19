@@ -1,11 +1,11 @@
 # Feishu Feedback Worker
 
-This Worker receives Feishu feedback links and card interaction callbacks, then
-writes feedback to `feedback.json` on the GitHub `data` branch.
+This Worker receives Feishu card interaction callbacks and writes feedback to
+`feedback.json` on the GitHub `data` branch.
 
 ## Deploy
 
-Active feedback URL:
+Active Feishu callback URL:
 
 ```text
 https://youtube-digest-feedback-pages.pages.dev/
@@ -38,12 +38,12 @@ both the Pages project and the fallback Worker.
 In the Feishu app console:
 
 1. Enable bot capability.
-2. Keep `FEEDBACK_CALLBACK_URL` pointed at:
+2. Configure card interaction callback URL:
    `https://youtube-digest-feedback-pages.pages.dev/`
 3. Keep `FEISHU_APP_ID` and `FEISHU_APP_SECRET` configured in GitHub Actions.
 
 The digest must be sent by the Feishu app bot, not by a custom group webhook,
-so Feishu renders link buttons consistently.
+otherwise card button callbacks will not fire.
 
 ## Local Smoke Test
 

@@ -248,8 +248,13 @@ async function handleRequest(request, env, ctx) {
     return jsonResponse({});
   }
 
-  await recordFeedback(env, feedbackData);
   const label = feedbackData.reaction === "like" ? "已记录：有用" : "已记录：不想看";
+  const pendingRecord = recordFeedback(env, feedbackData).catch((error) => {
+    console.error("Failed to record feedback", error);
+  });
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(pendingRecord);
+  }
   return jsonResponse({ toast: { type: "success", content: label } });
 }
 

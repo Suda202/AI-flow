@@ -265,8 +265,10 @@ async function handler(request, response) {
       return sendJson(response, {});
     }
 
-    await recordFeedback(process.env, feedbackData);
     const label = feedbackData.reaction === "like" ? "已记录：有用" : "已记录：不想看";
+    recordFeedback(process.env, feedbackData).catch((error) => {
+      console.error("Failed to record feedback", error);
+    });
     return sendJson(response, { toast: { type: "success", content: label } });
   } catch (error) {
     console.error(error);
