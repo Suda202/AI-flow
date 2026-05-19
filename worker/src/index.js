@@ -16,6 +16,51 @@ function jsonResponse(data, status = 200) {
   });
 }
 
+function htmlResponse(content, status = 200) {
+  return new Response(content, {
+    status,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
+function feedbackSuccessHtml(feedbackData) {
+  const label = feedbackData.reaction === "like" ? "有用" : "不想看";
+  const title = escapeHtml(feedbackData.videoMeta.title || feedbackData.videoId);
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>反馈已记录</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f7f8fa; color: #1f2329; }
+    main { max-width: 520px; margin: 14vh auto 0; padding: 32px 24px; background: white; border: 1px solid #dee0e3; border-radius: 8px; }
+    h1 { margin: 0 0 12px; font-size: 22px; }
+    p { margin: 8px 0; line-height: 1.6; color: #4e5969; }
+    .label { color: #1664ff; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>反馈已记录</h1>
+    <p>这条视频已标记为 <span class="label">${label}</span>。</p>
+    <p>${title}</p>
+    <p>可以关闭这个页面回到飞书。</p>
+  </main>
+</body>
+</html>`;
+}
+
 function decodeBase64(value) {
   const bytes = Uint8Array.from(atob(value.replace(/\n/g, "")), (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);
@@ -122,6 +167,26 @@ function extractFeedback(payload) {
   };
 }
 
+function extractFeedbackFromSearchParams(searchParams) {
+  const value = Object.fromEntries(searchParams.entries());
+  const videoId = value.video_id || value.videoId;
+  const reaction = value.action;
+  if (!videoId || !["like", "dislike"].includes(reaction)) {
+    return null;
+  }
+
+  return {
+    videoId,
+    reaction,
+    reason: value.reason || null,
+    videoMeta: {
+      title: value.title || "",
+      author: value.author || "",
+      url: value.url || `https://www.youtube.com/watch?v=${videoId}`,
+    },
+  };
+}
+
 async function recordFeedbackOnce(env, feedbackData) {
   const { sha, data } = await readGithubFile(env);
   const current = data[feedbackData.videoId] || {
@@ -158,6 +223,11 @@ async function recordFeedback(env, feedbackData) {
 
 async function handleRequest(request, env, ctx) {
   if (request.method === "GET") {
+    const feedbackData = extractFeedbackFromSearchParams(new URL(request.url).searchParams);
+    if (feedbackData) {
+      await recordFeedback(env, feedbackData);
+      return htmlResponse(feedbackSuccessHtml(feedbackData));
+    }
     return jsonResponse({ status: "ok" });
   }
 
