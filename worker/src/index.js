@@ -159,11 +159,101 @@ function extractFeedback(payload) {
     videoId,
     reaction,
     reason: value.reason || null,
+    cardState: value.card_state || value.cardState || null,
+    feedbackState: value.feedback_state || value.feedbackState || {},
     videoMeta: {
       title: value.title || "",
       author: value.author || "",
       url: value.url || `https://www.youtube.com/watch?v=${videoId}`,
     },
+  };
+}
+
+function formatViewCount(count) {
+  const value = Number(count || 0);
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+}
+
+function buildFeedbackValue(video, action, cardState, feedbackState) {
+  return {
+    video_id: video.video_id,
+    title: video.title,
+    author: video.author,
+    url: video.url,
+    action,
+    card_state: cardState,
+    feedback_state: feedbackState,
+  };
+}
+
+function buildUpdatedCard(cardState, feedbackState) {
+  const elements = [];
+  for (const [index, item] of (cardState.items || []).entries()) {
+    const video = item.video || {};
+    const selected = feedbackState[video.video_id];
+    const likeText = selected === "like" ? "✅ 已选有用" : selected === "dislike" ? "👍 改为有用" : "👍 有用";
+    const dislikeText = selected === "dislike" ? "✅ 已选不想看" : selected === "like" ? "👎 改为不想看" : "👎 不想看";
+
+    elements.push({ tag: "hr" });
+    elements.push({ tag: "markdown", content: `**#${index + 1} ${video.title || ""}**` });
+    elements.push({
+      tag: "note",
+      elements: [{
+        tag: "plain_text",
+        content: `📺 ${video.author || ""} · ⏱ ${video.duration_str || ""} · 👀 ${formatViewCount(video.view_count)} views`,
+      }],
+    });
+    if (video.reason) {
+      elements.push({ tag: "markdown", content: `💡 ${video.reason}` });
+    }
+    if (item.summary) {
+      elements.push({ tag: "markdown", content: item.summary });
+    }
+    if (selected) {
+      elements.push({
+        tag: "note",
+        elements: [{
+          tag: "plain_text",
+          content: selected === "like" ? "✅ 已反馈：有用" : "✅ 已反馈：不想看",
+        }],
+      });
+    }
+    elements.push({
+      tag: "action",
+      actions: [
+        {
+          tag: "button",
+          text: { tag: "plain_text", content: "▶ 观看视频" },
+          type: "primary",
+          url: video.url,
+        },
+        {
+          tag: "button",
+          text: { tag: "plain_text", content: likeText },
+          type: selected === "like" ? "primary" : "secondary",
+          name: `feedback_like_${video.video_id}`,
+          value: buildFeedbackValue(video, "like", cardState, feedbackState),
+        },
+        {
+          tag: "button",
+          text: { tag: "plain_text", content: dislikeText },
+          type: selected === "dislike" ? "primary" : "secondary",
+          name: `feedback_dislike_${video.video_id}`,
+          value: buildFeedbackValue(video, "dislike", cardState, feedbackState),
+        },
+      ],
+    });
+  }
+
+  return {
+    config: { wide_screen_mode: true },
+    header: {
+      title: { tag: "plain_text", content: `📹 YouTube 今日推荐 (${cardState.date || new Date().toISOString().slice(0, 10)})` },
+      template: "blue",
+    },
+    elements,
   };
 }
 
@@ -255,7 +345,15 @@ async function handleRequest(request, env, ctx) {
   if (ctx && typeof ctx.waitUntil === "function") {
     ctx.waitUntil(pendingRecord);
   }
-  return jsonResponse({ toast: { type: "success", content: label } });
+  const responseBody = { toast: { type: "success", content: label } };
+  if (feedbackData.cardState && Array.isArray(feedbackData.cardState.items)) {
+    const nextFeedbackState = { ...feedbackData.feedbackState, [feedbackData.videoId]: feedbackData.reaction };
+    responseBody.card = {
+      type: "raw",
+      data: buildUpdatedCard(feedbackData.cardState, nextFeedbackState),
+    };
+  }
+  return jsonResponse(responseBody);
 }
 
 export default {

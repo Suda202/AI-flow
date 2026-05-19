@@ -475,10 +475,32 @@ def trim_summary(summary: str) -> str:
     return f"{trimmed}\n...（摘要已截断）"
 
 
+def build_feedback_card_state(videos_with_summaries: list[dict], card_date: str) -> dict:
+    """Embed enough card state for Feishu callback responses to redraw the card."""
+    items = []
+    for item in videos_with_summaries:
+        v = item["video"]
+        items.append({
+            "video": {
+                "video_id": v["video_id"],
+                "title": v["title"],
+                "author": v["author"],
+                "url": v["url"],
+                "duration_str": v["duration_str"],
+                "view_count": v["view_count"],
+                "reason": v.get("reason", ""),
+            },
+            "summary": trim_summary(item["summary"]),
+        })
+    return {"date": card_date, "items": items}
+
+
 def build_card_content(videos_with_summaries: list[dict], enable_feedback: bool = False) -> dict:
     """构建飞书卡片消息内容，返回卡片 JSON 结构"""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     elements = []
+    card_state = build_feedback_card_state(videos_with_summaries, today) if enable_feedback else None
+    feedback_state = {}
 
     for i, item in enumerate(videos_with_summaries, 1):
         v = item["video"]
@@ -513,14 +535,24 @@ def build_card_content(videos_with_summaries: list[dict], enable_feedback: bool 
                     "text": {"tag": "plain_text", "content": "👍 有用"},
                     "type": "primary",
                     "name": f"feedback_like_{v['video_id']}",
-                    "value": {**feedback_meta, "action": "like"},
+                    "value": {
+                        **feedback_meta,
+                        "action": "like",
+                        "card_state": card_state,
+                        "feedback_state": feedback_state,
+                    },
                 },
                 {
                     "tag": "button",
                     "text": {"tag": "plain_text", "content": "👎 不想看"},
                     "type": "secondary",
                     "name": f"feedback_dislike_{v['video_id']}",
-                    "value": {**feedback_meta, "action": "dislike"},
+                    "value": {
+                        **feedback_meta,
+                        "action": "dislike",
+                        "card_state": card_state,
+                        "feedback_state": feedback_state,
+                    },
                 },
             ])
         elements.append({"tag": "action", "actions": actions})
