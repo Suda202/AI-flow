@@ -34,6 +34,23 @@ CHANNELS_FILE = os.environ.get("CHANNELS_FILE", "channels.json")
 PROFILE_FILE = os.environ.get("PROFILE_FILE", "profile.json")
 HISTORY_FILE = os.environ.get("HISTORY_FILE", "history.json")
 HISTORY_MAX_DAYS = int(os.environ.get("HISTORY_MAX_DAYS", "30"))
+YOUTUBE_UPLOADS_PAGE_SIZE = int(os.environ.get("YOUTUBE_UPLOADS_PAGE_SIZE", "5"))
+LOCAL_TIMEZONE = timezone(timedelta(hours=8))
+
+
+def digest_date_label() -> str:
+    return datetime.now(LOCAL_TIMEZONE).strftime("%Y-%m-%d")
+
+
+def is_recent(published_str: str) -> bool:
+    published = datetime.fromisoformat(published_str.replace("Z", "+00:00"))
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
+    return published >= cutoff
+
+
+def chunked(items: list[str], size: int):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
 
 
 def load_channels() -> list[dict]:
@@ -112,19 +129,106 @@ def fetch_rss_videos(channel_id: str) -> list[dict]:
         "media": "http://search.yahoo.com/mrss/",
     }
     root = ET.fromstring(resp.text)
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=LOOKBACK_HOURS)
     videos = []
 
     for entry in root.findall("atom:entry", ns):
         published_str = entry.find("atom:published", ns).text
-        published = datetime.fromisoformat(published_str.replace("Z", "+00:00"))
-        if published < cutoff:
+        if not is_recent(published_str):
             continue
 
         video_id = entry.find("yt:videoId", ns).text
         title = entry.find("atom:title", ns).text
         author = root.find("atom:title", ns).text
 
+        videos.append({
+            "video_id": video_id,
+            "title": title,
+            "author": author,
+            "published": published_str,
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+        })
+
+    return videos
+
+
+def fetch_channel_upload_playlists(channel_ids: list[str]) -> dict[str, str]:
+    """通过 YouTube Data API 获取频道 uploads playlist，作为 RSS 失败兜底。"""
+    if not YOUTUBE_API_KEY:
+        return {}
+
+    playlists = {}
+    url = "https://www.googleapis.com/youtube/v3/channels"
+    for batch in chunked(channel_ids, 50):
+        try:
+            resp = requests.get(
+                url,
+                params={
+                    "part": "contentDetails",
+                    "id": ",".join(batch),
+                    "key": YOUTUBE_API_KEY,
+                },
+                timeout=15,
+            )
+            data = resp.json()
+            if resp.status_code != 200 or data.get("error"):
+                message = data.get("error", {}).get("message", data)
+                print(f"  ⚠️ YouTube API 频道查询失败: {message}")
+                continue
+
+            for item in data.get("items", []):
+                uploads = item.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads")
+                if uploads:
+                    playlists[item["id"]] = uploads
+        except Exception as e:
+            print(f"  ⚠️ YouTube API 频道查询异常: {e}")
+
+    missing_count = len(set(channel_ids) - set(playlists))
+    if missing_count:
+        print(f"  ⚠️ {missing_count} 个频道未找到 uploads playlist")
+    return playlists
+
+
+def fetch_upload_playlist_videos(channel_id: str, playlist_id: str) -> list[dict]:
+    """从 uploads playlist 获取最近视频，作为 RSS 空结果/失败的稳定兜底。"""
+    if not YOUTUBE_API_KEY:
+        return []
+
+    max_results = max(1, min(50, YOUTUBE_UPLOADS_PAGE_SIZE))
+    url = "https://www.googleapis.com/youtube/v3/playlistItems"
+    try:
+        resp = requests.get(
+            url,
+            params={
+                "part": "snippet,contentDetails",
+                "playlistId": playlist_id,
+                "maxResults": max_results,
+                "key": YOUTUBE_API_KEY,
+            },
+            timeout=15,
+        )
+        data = resp.json()
+        if resp.status_code != 200 or data.get("error"):
+            message = data.get("error", {}).get("message", data)
+            print(f"  ⚠️ YouTube API uploads fetch failed for {channel_id}: {message}")
+            return []
+    except Exception as e:
+        print(f"  ⚠️ YouTube API uploads fetch failed for {channel_id}: {e}")
+        return []
+
+    videos = []
+    for item in data.get("items", []):
+        snippet = item.get("snippet", {})
+        content = item.get("contentDetails", {})
+        published_str = content.get("videoPublishedAt") or snippet.get("publishedAt")
+        if not published_str or not is_recent(published_str):
+            continue
+
+        video_id = content.get("videoId") or snippet.get("resourceId", {}).get("videoId")
+        title = snippet.get("title") or ""
+        if not video_id or title in {"Private video", "Deleted video"}:
+            continue
+
+        author = snippet.get("videoOwnerChannelTitle") or snippet.get("channelTitle") or channel_id
         videos.append({
             "video_id": video_id,
             "title": title,
@@ -497,7 +601,7 @@ def build_feedback_card_state(videos_with_summaries: list[dict], card_date: str)
 
 def build_card_content(videos_with_summaries: list[dict], enable_feedback: bool = False) -> dict:
     """构建飞书卡片消息内容，返回卡片 JSON 结构"""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = digest_date_label()
     elements = []
     card_state = build_feedback_card_state(videos_with_summaries, today) if enable_feedback else None
     feedback_state = {}
@@ -567,32 +671,45 @@ def build_card_content(videos_with_summaries: list[dict], enable_feedback: bool 
     }
 
 
-def send_digest_to_feishu(videos_with_summaries: list[dict]) -> bool:
-    """通过飞书应用机器人发送日报；应用卡片支持按钮回调。"""
+def build_status_card_content(title: str, message: str, template: str = "grey") -> dict:
+    """构建轻量状态卡片，用于无候选或数据源异常时避免静默失败。"""
+    today = digest_date_label()
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": f"📹 YouTube 今日推荐 ({today})"},
+            "template": template,
+        },
+        "elements": [
+            {"tag": "markdown", "content": f"**{title}**"},
+            {"tag": "markdown", "content": message},
+        ],
+    }
+
+
+def get_feishu_target() -> tuple[str, str, str] | None:
+    if FEISHU_CHAT_ID:
+        return FEISHU_CHAT_ID, "chat_id", "群聊"
+    if FEISHU_USER_ID:
+        return FEISHU_USER_ID, "user_id", "个人"
+    print("  ⚠️ 未配置 FEISHU_CHAT_ID 或 FEISHU_USER_ID")
+    return None
+
+
+def send_card_to_feishu(card: dict, success_message: str) -> bool:
     if not FEISHU_APP_ID or not FEISHU_APP_SECRET:
         print("  ⚠️ 未配置飞书应用凭证 (FEISHU_APP_ID/SECRET)")
-        for item in videos_with_summaries:
-            print(f"  📝 {item['video']['title']}\n{item['summary']}\n")
         return False
 
-    if FEISHU_CHAT_ID:
-        receive_id = FEISHU_CHAT_ID
-        receive_id_type = "chat_id"
-        target_label = "群聊"
-    elif FEISHU_USER_ID:
-        receive_id = FEISHU_USER_ID
-        receive_id_type = "user_id"
-        target_label = "个人"
-    else:
-        print("  ⚠️ 未配置 FEISHU_CHAT_ID 或 FEISHU_USER_ID")
+    target = get_feishu_target()
+    if not target:
         return False
+    receive_id, receive_id_type, target_label = target
 
     token = get_tenant_access_token()
     if not token:
         print("  ❌ 无法获取飞书 access token")
         return False
-
-    card = build_card_content(videos_with_summaries, enable_feedback=True)
 
     body = {
         "receive_id": receive_id,
@@ -610,7 +727,7 @@ def send_digest_to_feishu(videos_with_summaries: list[dict]) -> bool:
         resp = requests.post(url, headers=headers, json=body, timeout=10)
         result = resp.json()
         if result.get("code") == 0:
-            print(f"  ✅ 飞书应用{target_label}推送成功 ({len(videos_with_summaries)} 个视频，已启用反馈按钮)")
+            print(f"  ✅ 飞书应用{target_label}{success_message}")
             return True
         else:
             print(f"  ❌ 飞书应用{target_label}推送失败: {result}")
@@ -620,21 +737,15 @@ def send_digest_to_feishu(videos_with_summaries: list[dict]) -> bool:
         return False
 
 
-def send_digest_to_webhook(videos_with_summaries: list[dict]) -> bool:
-    """通过群自定义机器人 Webhook 发送日报；仅兜底，不支持按钮回调。"""
+def send_card_to_webhook(card: dict, success_message: str) -> bool:
     if not FEISHU_WEBHOOK_URL:
         return False
 
-    body = {
-        "msg_type": "interactive",
-        "card": build_card_content(videos_with_summaries, enable_feedback=False)
-    }
-
     try:
-        resp = requests.post(FEISHU_WEBHOOK_URL, json=body, timeout=10)
+        resp = requests.post(FEISHU_WEBHOOK_URL, json={"msg_type": "interactive", "card": card}, timeout=10)
         result = resp.json()
         if result.get("StatusCode") == 0:
-            print(f"  ✅ 飞书群 Webhook 推送成功 ({len(videos_with_summaries)} 个视频，无反馈回调)")
+            print(f"  ✅ 飞书群 Webhook {success_message}")
             return True
         else:
             print(f"  ❌ 飞书群 Webhook 推送失败: {result}")
@@ -642,6 +753,31 @@ def send_digest_to_webhook(videos_with_summaries: list[dict]) -> bool:
     except Exception as e:
         print(f"  ❌ 飞书群 Webhook 推送异常: {e}")
         return False
+
+
+def send_digest_to_feishu(videos_with_summaries: list[dict]) -> bool:
+    """通过飞书应用机器人发送日报；应用卡片支持按钮回调。"""
+    if not FEISHU_APP_ID or not FEISHU_APP_SECRET:
+        print("  ⚠️ 未配置飞书应用凭证 (FEISHU_APP_ID/SECRET)")
+        for item in videos_with_summaries:
+            print(f"  📝 {item['video']['title']}\n{item['summary']}\n")
+        return False
+
+    card = build_card_content(videos_with_summaries, enable_feedback=True)
+    return send_card_to_feishu(card, f"推送成功 ({len(videos_with_summaries)} 个视频，已启用反馈按钮)")
+
+
+def send_digest_to_webhook(videos_with_summaries: list[dict]) -> bool:
+    """通过群自定义机器人 Webhook 发送日报；仅兜底，不支持按钮回调。"""
+    card = build_card_content(videos_with_summaries, enable_feedback=False)
+    return send_card_to_webhook(card, f"推送成功 ({len(videos_with_summaries)} 个视频，无反馈回调)")
+
+
+def send_status_to_feishu(title: str, message: str, template: str = "grey") -> bool:
+    card = build_status_card_content(title, message, template)
+    if send_card_to_feishu(card, "状态推送成功"):
+        return True
+    return send_card_to_webhook(card, "状态推送成功")
 
 
 # ============ 主流程 ============
@@ -675,6 +811,33 @@ def main():
                     all_rss_videos[ch["channel_id"]] = videos
             except Exception as e:
                 print(f"  ⚠️ {ch.get('name', ch['channel_id'])}: {e}")
+
+    total_rss = sum(len(v) for v in all_rss_videos.values())
+    print(f"   RSS 共发现 {total_rss} 个新视频（来自 {len(all_rss_videos)} 个频道）")
+
+    fallback_channel_ids = [ch["channel_id"] for ch in channels if ch["channel_id"] not in all_rss_videos]
+    if fallback_channel_ids and YOUTUBE_API_KEY:
+        print(f"🔁 RSS 未返回新视频的 {len(fallback_channel_ids)} 个频道，使用 YouTube Data API 兜底...")
+        upload_playlists = fetch_channel_upload_playlists(fallback_channel_ids)
+        api_fallback_videos = {}
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_ch = {
+                executor.submit(fetch_upload_playlist_videos, channel_id, playlist_id): channel_id
+                for channel_id, playlist_id in upload_playlists.items()
+            }
+            for future in as_completed(future_to_ch):
+                channel_id = future_to_ch[future]
+                try:
+                    videos = future.result()
+                    if videos:
+                        api_fallback_videos[channel_id] = videos
+                except Exception as e:
+                    print(f"  ⚠️ YouTube API fallback error for {channel_id}: {e}")
+        all_rss_videos.update(api_fallback_videos)
+        total_api_fallback = sum(len(v) for v in api_fallback_videos.values())
+        print(f"   API 兜底发现 {total_api_fallback} 个新视频（来自 {len(api_fallback_videos)} 个频道）")
+    elif fallback_channel_ids:
+        print("  ⚠️ 未配置 YOUTUBE_API_KEY，无法在 RSS 空结果时兜底")
 
     total_rss = sum(len(v) for v in all_rss_videos.values())
     print(f"   共发现 {total_rss} 个新视频（来自 {len(all_rss_videos)} 个频道）\n")
@@ -715,6 +878,10 @@ def main():
 
     if not candidates:
         print("\n📭 没有新的长视频候选")
+        send_status_to_feishu(
+            "今天没有符合条件的新长视频",
+            f"已扫描 {len(channels)} 个频道，最近 {LOOKBACK_HOURS} 小时没有发现满足时长和去重条件的视频。",
+        )
         save_history(history)
         return
 
@@ -786,6 +953,10 @@ def main():
 
     if not filtered:
         print("\n📭 预过滤后没有候选视频")
+        send_status_to_feishu(
+            "今天没有符合偏好的推荐",
+            f"已发现 {len(candidates)} 个新长视频，但都被偏好规则过滤掉了。主要会过滤投资、纯技术细节、入门教程和低信息密度内容。",
+        )
         save_history(history)
         return
 
