@@ -21,6 +21,7 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
 FEISHU_USER_ID = os.environ.get("FEISHU_USER_ID", "")  # 目标用户 ID (ou_xxxxx)
 FEISHU_CHAT_ID = os.environ.get("FEISHU_CHAT_ID", "")  # 目标群 ID (oc_xxxxx)
 FEISHU_WEBHOOK_URL = os.environ.get("FEISHU_WEBHOOK_URL", "")  # 群自定义机器人 Webhook（仅兜底，无点击回调）
+FEISHU_SEND_STATUS_CARD = os.environ.get("FEISHU_SEND_STATUS_CARD", "").lower() in {"1", "true", "yes", "on"}
 MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
 MINIMAX_API_BASE = os.environ.get("MINIMAX_API_BASE", "https://api.minimaxi.com/anthropic")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
@@ -849,6 +850,10 @@ def send_digest_to_webhook(videos_with_summaries: list[dict]) -> bool:
 
 
 def send_status_to_feishu(title: str, message: str, template: str = "grey") -> bool:
+    if not FEISHU_SEND_STATUS_CARD:
+        print(f"  ℹ️ 状态卡推送已关闭: {title}")
+        return False
+
     card = build_status_card_content(title, message, template)
     if send_card_to_feishu(card, "状态推送成功"):
         return True
