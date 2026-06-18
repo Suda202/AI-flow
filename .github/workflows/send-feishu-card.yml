@@ -1,0 +1,83 @@
+name: Send Feishu Card
+
+on:
+  workflow_dispatch:
+    inputs:
+      card_json_b64:
+        description: "Base64-encoded Feishu interactive card JSON"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send card
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_USER_ID: ${{ secrets.FEISHU_USER_ID }}
+          FEISHU_CHAT_ID: ${{ secrets.FEISHU_CHAT_ID }}
+          CARD_JSON_B64: ${{ inputs.card_json_b64 }}
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import sys
+          import urllib.request
+
+          app_id = os.environ.get("FEISHU_APP_ID", "")
+          app_secret = os.environ.get("FEISHU_APP_SECRET", "")
+          chat_id = os.environ.get("FEISHU_CHAT_ID", "")
+          user_id = os.environ.get("FEISHU_USER_ID", "")
+          card_b64 = os.environ.get("CARD_JSON_B64", "")
+
+          if not app_id or not app_secret:
+              raise SystemExit("Missing FEISHU_APP_ID/FEISHU_APP_SECRET")
+          if not chat_id and not user_id:
+              raise SystemExit("Missing FEISHU_CHAT_ID/FEISHU_USER_ID")
+          if not card_b64:
+              raise SystemExit("Missing CARD_JSON_B64")
+
+          card = json.loads(base64.b64decode(card_b64).decode("utf-8"))
+
+          def post_json(url, payload, headers=None):
+              body = json.dumps(payload).encode("utf-8")
+              req = urllib.request.Request(
+                  url,
+                  data=body,
+                  headers={"Content-Type": "application/json", **(headers or {})},
+                  method="POST",
+              )
+              with urllib.request.urlopen(req, timeout=20) as resp:
+                  return json.loads(resp.read().decode("utf-8"))
+
+          token_result = post_json(
+              "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+              {"app_id": app_id, "app_secret": app_secret},
+          )
+          if token_result.get("code") != 0:
+              print(json.dumps(token_result, ensure_ascii=False))
+              raise SystemExit("Failed to get tenant access token")
+
+          receive_id = chat_id or user_id
+          receive_id_type = "chat_id" if chat_id else "user_id"
+          message_result = post_json(
+              f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type={receive_id_type}",
+              {
+                  "receive_id": receive_id,
+                  "msg_type": "interactive",
+                  "content": json.dumps(card, ensure_ascii=False),
+              },
+              {"Authorization": f"Bearer {token_result['tenant_access_token']}"},
+          )
+          if message_result.get("code") != 0:
+              print(json.dumps(message_result, ensure_ascii=False))
+              raise SystemExit("Failed to send Feishu card")
+
+          print("Feishu card sent")
+          PY
