@@ -22,8 +22,10 @@ FEISHU_USER_ID = os.environ.get("FEISHU_USER_ID", "")  # 目标用户 ID (ou_xxx
 FEISHU_CHAT_ID = os.environ.get("FEISHU_CHAT_ID", "")  # 目标群 ID (oc_xxxxx)
 FEISHU_WEBHOOK_URL = os.environ.get("FEISHU_WEBHOOK_URL", "")  # 群自定义机器人 Webhook（仅兜底，无点击回调）
 FEISHU_SEND_STATUS_CARD = os.environ.get("FEISHU_SEND_STATUS_CARD", "").lower() in {"1", "true", "yes", "on"}
+# 变量名保留 MINIMAX，避免改动现有 Secrets；实际走 OpenAI 兼容摘要 LLM。
 MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
-MINIMAX_API_BASE = os.environ.get("MINIMAX_API_BASE", "https://api.minimaxi.com/anthropic")
+MINIMAX_API_BASE = (os.environ.get("MINIMAX_API_BASE") or "https://api.360.cn/v1").rstrip("/")
+MINIMAX_MODEL = os.environ.get("MINIMAX_MODEL") or "deepseek/deepseek-v4-flash"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 MIN_DURATION_MINUTES = int(os.environ.get("MIN_DURATION_MINUTES", "3"))  # 过滤 Shorts（<=3min）
@@ -57,6 +59,7 @@ SUMMARY_PROMPT_LEAK_MARKERS = [
     "max_tokens",
     "messages",
 ]
+LLM_NON_TEXT_BLOCK_TYPES = {"thinking", "redacted_thinking"}
 
 
 def digest_date_label() -> str:
@@ -389,7 +392,7 @@ def get_transcript(video_id: str) -> str | None:
         return None
 
 
-# ============ Minimax 摘要 ============
+# ============ 摘要 LLM ============
 def summarize_with_llm(title: str, author: str, content: str, content_type: str = "字幕") -> dict:
     """基于字幕或描述生成结构化摘要"""
     if not MINIMAX_API_KEY:
@@ -423,41 +426,95 @@ def summarize_with_llm(title: str, author: str, content: str, content_type: str 
     return {"summary": "摘要生成失败"}
 
 
+def llm_chat_completions_url() -> str:
+    if MINIMAX_API_BASE.endswith("/chat/completions"):
+        return MINIMAX_API_BASE
+    return f"{MINIMAX_API_BASE}/chat/completions"
+
+
 def call_llm(prompt: str, max_tokens: int = 1024) -> str | None:
-    """调用 Minimax LLM，返回文本结果"""
+    """调用 OpenAI 兼容摘要 LLM，返回文本结果"""
     if not MINIMAX_API_KEY:
         return None
     try:
         resp = requests.post(
-            f"{MINIMAX_API_BASE}/v1/messages",
+            llm_chat_completions_url(),
             headers={
-                "x-api-key": MINIMAX_API_KEY,
-                "content-type": "application/json",
-                "anthropic-version": "2023-06-01",
+                "Authorization": f"Bearer {MINIMAX_API_KEY}",
+                "Content-Type": "application/json",
             },
             json={
-                "model": "MiniMax-M2.5",
+                "model": MINIMAX_MODEL,
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=60,
         )
         data = resp.json()
-        if data.get("type") == "error":
-            print(f"  ⚠️ LLM error: {data.get('error', {}).get('message', str(data))}")
+        if data.get("error"):
+            error = data.get("error", {})
+            print(f"  ⚠️ LLM error: {error.get('message', str(error))}")
             return None
-        # 从 content 数组中提取最后一个 text block
-        for block in reversed(data.get("content", [])):
-            if isinstance(block, dict) and block.get("type") == "text":
-                return block.get("text", "")
-        # fallback: 尝试直接取第一个 block
+        status_code = getattr(resp, "status_code", 200)
+        if isinstance(status_code, int) and status_code >= 400:
+            print(f"  ⚠️ LLM HTTP error: {status_code}")
+            return None
+
+        choices = data.get("choices", [])
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("message", {})
+                if isinstance(message, dict):
+                    text = extract_llm_content_text(message.get("content"))
+                    if text:
+                        return text
+                text = choice.get("text")
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+
         content = data.get("content", [])
-        if content and isinstance(content[0], dict):
-            return content[0].get("text", str(content[0]))
+        text = extract_llm_content_text(content)
+        if text:
+            return text
+
+        for key in ("text", "completion"):
+            text = data.get(key)
+            if isinstance(text, str) and text.strip():
+                return text
         return None
     except Exception as e:
         print(f"  ⚠️ LLM call failed: {e}")
         return None
+
+
+def extract_llm_content_text(content) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        for block in reversed(content):
+            text = extract_llm_text_block(block)
+            if text:
+                return text
+    return ""
+
+
+def extract_llm_text_block(block) -> str:
+    """Return model-visible text only; never stringify reasoning/tool blocks."""
+    if isinstance(block, str):
+        return block.strip()
+    if not isinstance(block, dict):
+        return ""
+
+    block_type = block.get("type")
+    if isinstance(block_type, str) and block_type in LLM_NON_TEXT_BLOCK_TYPES:
+        return ""
+
+    text = block.get("text")
+    if isinstance(text, str):
+        return text.strip()
+    return ""
 
 
 def call_gemini(prompt: str) -> str | None:
@@ -562,7 +619,7 @@ def rank_candidates(candidates: list[dict], top_n: int, profile: dict) -> list[d
 
     result = call_gemini(prompt)
     if not result:
-        print("  ⚠️ Gemini 排序失败，尝试 MiniMax...")
+        print("  ⚠️ Gemini 排序失败，尝试摘要 LLM...")
         result = call_llm(prompt, max_tokens=500)
     if not result:
         print("  ⚠️ LLM 排序全部失败，回退到播放量排序")
@@ -637,11 +694,31 @@ def looks_like_summary_prompt_leak(summary: str) -> bool:
     return marker_count >= 2 or ("格式要求" in text and "视频标题" in text)
 
 
+def looks_like_internal_reasoning_leak(summary: str) -> bool:
+    """Detect thinking/reasoning blocks that should never appear in cards."""
+    text = (summary or "").strip()
+    if not text:
+        return False
+
+    head = text[:1000]
+    structured_reasoning = re.match(r"^\s*(?:```(?:json|python)?\s*)?[\{\[]", head)
+    if structured_reasoning and re.search(r"['\"](?:thinking|signature)['\"]\s*:", head):
+        return True
+
+    reasoning_phrases = [
+        "The user asks me",
+        "The task is to",
+        "We need answer",
+        "I need craft",
+    ]
+    return "结论：" not in head and any(phrase in head for phrase in reasoning_phrases)
+
+
 def sanitize_summary_text(summary: str) -> str:
     text = (summary or "").strip()
     if not text:
         return ""
-    if looks_like_summary_prompt_leak(text):
+    if looks_like_summary_prompt_leak(text) or looks_like_internal_reasoning_leak(text):
         return SUMMARY_PROMPT_LEAK_FALLBACK
     return text
 
