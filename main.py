@@ -9,6 +9,7 @@ import os
 import re
 import json
 import time
+import hashlib
 import requests
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -59,7 +60,7 @@ SUMMARY_MAX_CHARS = env_int("SUMMARY_MAX_CHARS", 700, min_value=100)
 LOOKBACK_HOURS = env_int("LOOKBACK_HOURS", 24, min_value=1)
 AIHOT_ENABLED = env_bool("AIHOT_ENABLED", True)
 AIHOT_API_BASE = (os.environ.get("AIHOT_API_BASE") or "https://aihot.virxact.com").rstrip("/")
-AIHOT_TAKE = env_int("AIHOT_TAKE", 5, min_value=0, max_value=20)
+AIHOT_TAKE = env_int("AIHOT_TAKE", 7, min_value=0, max_value=20)
 AIHOT_CANDIDATE_TAKE = env_int("AIHOT_CANDIDATE_TAKE", max(30, AIHOT_TAKE * 6), min_value=1, max_value=100)
 AIHOT_MIN_SCORE = env_int("AIHOT_MIN_SCORE", 0, min_value=0, max_value=100)
 AIHOT_USER_AGENT = os.environ.get("AIHOT_USER_AGENT") or (
@@ -172,6 +173,18 @@ def save_history(history: dict):
 
 # ============ AI HOT ============
 AIHOT_INTEREST_KEYWORDS = [
+    ("Loop Engineering", 32, [
+        "loop engineering",
+        "agent loop",
+        "循环工程",
+    ]),
+    ("Agent", 24, [
+        "agent",
+        "agentic",
+        "deep agents",
+        "coding agent",
+        "智能体",
+    ]),
     ("GEO", 30, [
         "geo",
         "generative engine optimization",
@@ -273,12 +286,47 @@ AIHOT_DOWNRANK_KEYWORDS = [
     "rag 调参",
 ]
 
+AIHOT_HARD_REJECT_KEYWORDS = [
+    "父亲节",
+    "母亲节",
+    "节日活动",
+    "上传照片",
+    "生成合影",
+    "抽奖",
+    "促销活动",
+    "双向转售",
+    "转售模型",
+    "ai 中间商",
+]
+
+AIHOT_AGENT_KEYWORDS = [
+    "agent", "agentic", "deep agents", "coding agent", "code agent",
+    "harness", "loop engineering", "claude code", "codex", "智能体",
+]
+
+AIHOT_BUSINESS_KEYWORDS = [
+    "geo", "generative engine optimization", "go-to-market", "gtm",
+    "海外增长", "出海", "ai 搜索", "product strategy", "产品策略",
+    "商业化", "pricing", "定价", "营销", "广告",
+]
+
+AIHOT_FRONTIER_KEYWORDS = [
+    "silicon valley", "硅谷", "frontier", "前沿", "趋势",
+    "openai", "anthropic", "deepmind", "a16z", "sequoia",
+    "new model", "新模型", "research breakthrough", "研究突破",
+]
+
 
 def utc_iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def fetch_aihot_items(hours: int | None = None, take: int | None = None, profile: dict | None = None) -> list[dict]:
+def fetch_aihot_items(
+    hours: int | None = None,
+    take: int | None = None,
+    profile: dict | None = None,
+    ranking_hints: str = "",
+) -> list[dict]:
     """Fetch recent AI HOT selected items. Failure should not block the YouTube digest."""
     if not AIHOT_ENABLED:
         return []
@@ -335,7 +383,12 @@ def fetch_aihot_items(hours: int | None = None, take: int | None = None, profile
             break
 
     if profile:
-        items = rank_aihot_items_for_profile(items, profile)
+        return select_aihot_items_for_profile(
+            items,
+            profile,
+            ranking_hints=ranking_hints,
+            take=item_limit,
+        )
     return items[:item_limit]
 
 
@@ -355,7 +408,16 @@ def aihot_item_text(item: dict) -> str:
     ).lower()
 
 
-def score_aihot_item_for_profile(item: dict, profile: dict | None = None) -> tuple[float, list[str]]:
+def is_agent_focused_aihot_item(item: dict) -> bool:
+    text = aihot_item_text(item)
+    return any(keyword_matches(text, keyword) for keyword in AIHOT_AGENT_KEYWORDS)
+
+
+def score_aihot_item_for_profile(
+    item: dict,
+    profile: dict | None = None,
+    ranking_hints: str = "",
+) -> tuple[float, list[str]]:
     text = aihot_item_text(item)
     score = float(item.get("score") or 0)
     match_tags = []
@@ -382,17 +444,35 @@ def score_aihot_item_for_profile(item: dict, profile: dict | None = None) -> tup
     downrank_keywords = AIHOT_DOWNRANK_KEYWORDS + [
         str(keyword) for keyword in profile.get("deprioritize_topics", [])
     ]
+    agent_focused = is_agent_focused_aihot_item(item)
     for keyword in downrank_keywords:
+        if agent_focused and keyword in {"从零开始", "教程", "代码实现", "api 参数"}:
+            continue
         if keyword_matches(text, keyword):
             score -= 16
+
+    for line in ranking_hints.splitlines():
+        label_text = line.split("：", 1)[-1] if "：" in line else ""
+        for label in (part.strip() for part in label_text.split("、")):
+            if not label or not keyword_matches(text, label):
+                continue
+            if "回避" in line:
+                score -= 12
+            elif "偏好" in line:
+                score += 8
+                match_tags.append(label)
 
     return score, list(dict.fromkeys(match_tags))
 
 
-def rank_aihot_items_for_profile(items: list[dict], profile: dict | None = None) -> list[dict]:
+def rank_aihot_items_for_profile(
+    items: list[dict],
+    profile: dict | None = None,
+    ranking_hints: str = "",
+) -> list[dict]:
     ranked = []
     for item in items:
-        preference_score, match_tags = score_aihot_item_for_profile(item, profile)
+        preference_score, match_tags = score_aihot_item_for_profile(item, profile, ranking_hints)
         ranked_item = {**item, "preference_score": preference_score, "match_tags": match_tags}
         ranked.append(ranked_item)
 
@@ -403,13 +483,125 @@ def rank_aihot_items_for_profile(items: list[dict], profile: dict | None = None)
     )
 
 
+def aihot_item_lane(item: dict) -> str | None:
+    text = aihot_item_text(item)
+    if any(keyword_matches(text, keyword) for keyword in AIHOT_AGENT_KEYWORDS):
+        return "agent"
+    if any(keyword_matches(text, keyword) for keyword in AIHOT_FRONTIER_KEYWORDS):
+        return "frontier"
+    if any(keyword_matches(text, keyword) for keyword in AIHOT_BUSINESS_KEYWORDS):
+        return "business"
+    score = float(item.get("score") or 0)
+    if score >= 85 and any(keyword_matches(text, keyword) for keyword in ("ai", "llm", "大模型")):
+        return "exploration"
+    return None
+
+
+def passes_aihot_quality_gate(item: dict, profile: dict | None = None) -> bool:
+    text = aihot_item_text(item)
+    if any(keyword_matches(text, keyword) for keyword in AIHOT_HARD_REJECT_KEYWORDS):
+        return False
+
+    agent_focused = is_agent_focused_aihot_item(item)
+    generic_tutorial = any(keyword_matches(text, keyword) for keyword in (
+        "从零开始", "getting started", "beginner tutorial", "安装教程",
+        "api 参数", "向量数据库教程", "rag 调参",
+    ))
+    if generic_tutorial and not agent_focused:
+        return False
+
+    profile = profile or {}
+    if not agent_focused:
+        for keyword in profile.get("deprioritize_topics", []):
+            if keyword_matches(text, str(keyword)):
+                return False
+    if any(keyword_matches(text, keyword) for keyword in ("股票", "股价", "估值", "投资机会")):
+        return False
+    return aihot_item_lane(item) is not None
+
+
+def parse_aihot_selection_response(raw: str | None, candidate_ids: set[str]) -> list[str] | None:
+    if not raw:
+        return None
+    text = str(raw).strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("selected_ids"), list):
+        return None
+    return [
+        str(item_id) for item_id in payload["selected_ids"]
+        if str(item_id) in candidate_ids
+    ]
+
+
+def select_aihot_items_for_profile(
+    items: list[dict],
+    profile: dict | None = None,
+    *,
+    ranking_hints: str = "",
+    take: int | None = None,
+) -> list[dict]:
+    """Select only genuinely useful AI HOT items; returning zero is valid."""
+    item_limit = AIHOT_TAKE if take is None else max(0, take)
+    ranked = rank_aihot_items_for_profile(items, profile, ranking_hints)
+    candidates = [item for item in ranked if passes_aihot_quality_gate(item, profile)]
+
+    exploration_count = 0
+    deterministic = []
+    for item in candidates:
+        lane = aihot_item_lane(item)
+        if lane == "exploration":
+            if exploration_count >= 2:
+                continue
+            exploration_count += 1
+        deterministic.append({**item, "selection_lane": lane})
+        if len(deterministic) >= item_limit:
+            break
+
+    if not GEMINI_API_KEY or not deterministic:
+        return deterministic
+
+    prompt_items = [{
+        key: item.get(key)
+        for key in ("id", "title", "summary", "source", "score", "match_tags", "selection_lane")
+    } for item in deterministic]
+    prompt = f"""从 AI HOT 候选中选出真正值得给该用户看的内容。宁缺毋滥，可以返回空数组。
+优先：Agent/Agentic Engineering/Loop Engineering、硅谷正在流行的前沿趋势、有实际产品或商业价值的深度内容。
+保留 Agent 实战教程；排除普通 API/安装教程、节日营销、软广、转售拼接新闻和低信息量内容。
+用户画像：{json.dumps(profile or {}, ensure_ascii=False)}
+动态偏好：{ranking_hints}
+候选：{json.dumps(prompt_items, ensure_ascii=False)}
+只返回 JSON：{{"selected_ids":["id"]}}
+"""
+    selected_ids = parse_aihot_selection_response(
+        call_gemini(prompt),
+        {str(item.get("id") or "") for item in deterministic},
+    )
+    if selected_ids is None:
+        return deterministic
+    by_id = {str(item.get("id") or ""): item for item in deterministic}
+    return [by_id[item_id] for item_id in selected_ids][:item_limit]
+
+
 def format_aihot_summary(summary: str) -> str:
     """Add paragraph breaks to AI HOT's single-paragraph Chinese summaries."""
     text = (summary or "").strip()
     return re.sub(r"([。！？][”’」』）》】]?)\s*(?=\S)", r"\1\n\n", text)
 
 
-def build_aihot_card_elements(aihot_items: list[dict]) -> list[dict]:
+def aihot_content_id(item: dict) -> str:
+    raw_id = str(item.get("id") or "").strip()
+    if not raw_id:
+        raw_id = hashlib.sha256(str(item.get("url") or "").encode("utf-8")).hexdigest()[:16]
+    return f"aihot:{raw_id}"
+
+
+def build_aihot_card_elements(aihot_items: list[dict], enable_feedback: bool = False) -> list[dict]:
     if not aihot_items:
         return []
 
@@ -421,12 +613,41 @@ def build_aihot_card_elements(aihot_items: list[dict]) -> list[dict]:
         summary = format_aihot_summary(item.get("summary") or "")
         if summary:
             elements.append({"tag": "markdown", "content": summary})
-        elements.append({"tag": "action", "actions": [{
+        actions = [{
             "tag": "button",
             "text": {"tag": "plain_text", "content": "查看原文"},
             "type": "default",
             "url": item["url"],
-        }]})
+        }]
+        if enable_feedback:
+            content_id = aihot_content_id(item)
+            feedback_meta = {
+                "content_id": content_id,
+                "content_type": "aihot",
+                "title": item["title"],
+                "creator": item.get("source") or "AI HOT",
+                "url": item["url"],
+                "category": item.get("category") or "",
+                "selection_tags": (item.get("match_tags") or [])[:5],
+            }
+            action_suffix = hashlib.sha256(content_id.encode("utf-8")).hexdigest()[:12]
+            actions.extend([
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "👍 有用"},
+                    "type": "primary",
+                    "name": f"feedback_aihot_like_{action_suffix}",
+                    "value": {**feedback_meta, "action": "like"},
+                },
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "👎 不想看"},
+                    "type": "secondary",
+                    "name": f"feedback_aihot_dislike_{action_suffix}",
+                    "value": {**feedback_meta, "action": "dislike"},
+                },
+            ])
+        elements.append({"tag": "action", "actions": actions})
     return elements
 
 
@@ -1116,7 +1337,7 @@ def build_card_content(
     if aihot_items:
         if elements:
             elements.append({"tag": "hr"})
-        elements.extend(build_aihot_card_elements(aihot_items))
+        elements.extend(build_aihot_card_elements(aihot_items, enable_feedback=enable_feedback))
 
     if videos_with_summaries and aihot_items:
         title = f"📹 YouTube + AI HOT 今日推荐 ({today})"
@@ -1247,10 +1468,10 @@ def send_combined_digest(videos_with_summaries: list[dict], aihot_items: list[di
     if not videos_with_summaries and not aihot_items:
         return False
 
-    card = build_card_content(
+    app_card = build_card_content(
         videos_with_summaries,
         aihot_items=aihot_items,
-        enable_feedback=bool(videos_with_summaries),
+        enable_feedback=True,
     )
     parts = []
     if videos_with_summaries:
@@ -1258,9 +1479,19 @@ def send_combined_digest(videos_with_summaries: list[dict], aihot_items: list[di
     if aihot_items:
         parts.append(f"AI HOT {len(aihot_items)} 条")
     success_message = f"推送成功 ({'，'.join(parts)})"
-    if send_card_to_feishu(card, success_message):
+    if send_card_to_feishu(app_card, success_message):
         return True
-    return send_card_to_webhook(card, success_message)
+    webhook_card = build_card_content(
+        videos_with_summaries,
+        aihot_items=aihot_items,
+        enable_feedback=False,
+    )
+    return send_card_to_webhook(webhook_card, success_message)
+
+
+def load_ranking_hints() -> str:
+    path = Path("ranking_hints.txt")
+    return path.read_text().strip() if path.exists() else ""
 
 
 def send_status_to_feishu(title: str, message: str, template: str = "grey") -> bool:
@@ -1288,7 +1519,11 @@ def main():
     print(f"   过滤: 非 Shorts (>{MIN_DURATION_MINUTES}min), 最近 {LOOKBACK_HOURS}h, Top {top_n}\n")
     history = load_history()
     now_iso = datetime.now(timezone.utc).isoformat()
-    aihot_items = fetch_aihot_items(LOOKBACK_HOURS, profile=profile)
+    aihot_items = fetch_aihot_items(
+        LOOKBACK_HOURS,
+        profile=profile,
+        ranking_hints=load_ranking_hints(),
+    )
     if aihot_items:
         print(f"🔥 AI HOT 精选 {len(aihot_items)} 条，将合并到今日推送")
 

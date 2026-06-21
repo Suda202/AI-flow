@@ -97,7 +97,7 @@ class AihotIntegrationTests(unittest.TestCase):
         with mock.patch.object(main.requests, "get", return_value=FakeResponse(payload)):
             items = main.fetch_aihot_items(hours=24, take=2, profile=profile)
 
-        self.assertEqual([item["id"] for item in items], ["item_geo", "item_stock"])
+        self.assertEqual([item["id"] for item in items], ["item_geo"])
         self.assertIn("GEO", items[0]["match_tags"])
         self.assertIn("海外增长", items[0]["match_tags"])
 
@@ -183,7 +183,19 @@ class AihotIntegrationTests(unittest.TestCase):
             for action in element["actions"]
         ]
         self.assertIn("查看原文", action_text)
-        self.assertNotIn("👍 有用", action_text)
+        self.assertIn("👍 有用", action_text)
+        self.assertIn("👎 不想看", action_text)
+
+        feedback_values = [
+            action.get("value")
+            for element in card["elements"]
+            if element.get("tag") == "action"
+            for action in element["actions"]
+            if action.get("value")
+        ]
+        self.assertEqual(feedback_values[0]["content_type"], "aihot")
+        self.assertTrue(feedback_values[0]["content_id"].startswith("aihot:"))
+        self.assertEqual(feedback_values[0]["creator"], "不应显示的来源")
 
     def test_aihot_items_are_separated_without_repeating_section_heading(self):
         elements = main.build_aihot_card_elements([
@@ -232,6 +244,82 @@ class AihotIntegrationTests(unittest.TestCase):
         self.assertTrue(sent)
         send_card_to_feishu.assert_called_once()
         send_card_to_webhook.assert_not_called()
+        sent_card = send_card_to_feishu.call_args.args[0]
+        action_text = [
+            action["text"]["content"]
+            for element in sent_card["elements"]
+            if element.get("tag") == "action"
+            for action in element["actions"]
+        ]
+        self.assertIn("👍 有用", action_text)
+
+    def test_webhook_fallback_rebuilds_card_without_feedback_buttons(self):
+        with mock.patch.object(main, "send_card_to_feishu", return_value=False), \
+             mock.patch.object(main, "send_card_to_webhook", return_value=True) as webhook:
+            sent = main.send_combined_digest(
+                [],
+                [{"id": "one", "title": "AI 动态", "url": "https://example.com/one"}],
+            )
+
+        self.assertTrue(sent)
+        webhook_card = webhook.call_args.args[0]
+        action_text = [
+            action["text"]["content"]
+            for element in webhook_card["elements"]
+            if element.get("tag") == "action"
+            for action in element["actions"]
+        ]
+        self.assertEqual(action_text, ["查看原文"])
+
+    def test_quality_gate_keeps_agent_practice_and_rejects_promotions_and_resale(self):
+        items = [
+            {
+                "id": "deep-agents",
+                "title": "Deep Agents 实战教程：构建可持续运行的 Agent",
+                "summary": "从规划、记忆和工具调用讲解 Agent 工作流。",
+                "source": "LangChain",
+                "category": "tip",
+                "score": 75,
+                "url": "https://example.com/deep-agents",
+            },
+            {
+                "id": "loop",
+                "title": "Loop Engineering is replacing one-shot vibe coding",
+                "summary": "A Silicon Valley workflow for coding agents and harness design.",
+                "source": "Addy Osmani",
+                "category": "industry",
+                "score": 78,
+                "url": "https://example.com/loop",
+            },
+            {
+                "id": "resale",
+                "title": "微软双向转售 GPT 与 DeepSeek，成为全球最大 AI 中间商",
+                "summary": "讨论模型转售安排。",
+                "source": "Business Wire",
+                "category": "industry",
+                "score": 90,
+                "url": "https://example.com/resale",
+            },
+            {
+                "id": "promo",
+                "title": "腾讯元宝父亲节活动：上传照片生成与年轻爸爸的合影",
+                "summary": "节日营销活动。",
+                "source": "Tencent",
+                "category": "ai-products",
+                "score": 88,
+                "url": "https://example.com/promo",
+            },
+        ]
+
+        selected = main.select_aihot_items_for_profile(
+            items,
+            {"favorite_content": "Agent、Loop Engineering、硅谷前沿趋势"},
+            take=7,
+        )
+
+        self.assertEqual([item["id"] for item in selected], ["loop", "deep-agents"])
+        self.assertIn("Loop Engineering", selected[0]["match_tags"])
+        self.assertIn("Agent", selected[1]["match_tags"])
 
 
 if __name__ == "__main__":
