@@ -34,19 +34,22 @@ jobs:
         continue-on-error: true
         run: |
           git fetch origin data 2>/dev/null || true
-          for file in channels.json profile.json history.json feedback.json ranking_hints.txt; do
+          for file in channels.json profile.json history.json feedback.json preference_state.json ranking_hints.txt; do
             git checkout origin/data -- "$file" 2>/dev/null || true
           done
           [ -f channels.json ] || cp channels.example.json channels.json
           [ -f profile.json ] || cp profile.example.json profile.json
           [ -f history.json ] || echo '{}' > history.json
           [ -f feedback.json ] || echo '{}' > feedback.json
+          [ -f preference_state.json ] || echo '{}' > preference_state.json
           [ -f ranking_hints.txt ] || echo '' > ranking_hints.txt
 
       - name: Restore YouTube cookies
         run: echo "${{ secrets.YT_COOKIES_BASE64 }}" | base64 -d > cookies.txt
 
       - name: Analyze feedback and update preferences
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python update_preferences.py
 
       - name: Run digest
@@ -74,6 +77,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -B data
-          git add -f channels.json profile.json history.json feedback.json ranking_hints.txt
+          git add -f channels.json profile.json history.json feedback.json preference_state.json ranking_hints.txt
           git commit -m "update data $(date -u +%Y-%m-%d)" || true
           git push origin data --force

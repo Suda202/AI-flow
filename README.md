@@ -61,10 +61,12 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 1. 对 Top N 视频，优先用 yt-dlp 获取字幕生成摘要（内容最完整），字幕不可用时 fallback 到 description
 2. 360 DeepSeek v4 Flash 生成短摘要：结论 + 最多 3 个要点 + 适合场景，默认控制在 350 中文字符以内
 3. 所有视频合并为一条"今日推荐"日报，优先通过飞书应用机器人推送
-4. 应用机器人卡片包含 👍/👎 点击反馈，卡片回调会先返回成功提示，再异步写入 `feedback.json`，下次运行前生成动态排序提示
-   - 反馈学习以主题为主：单次点踩只影响主题，不直接惩罚频道
-   - 同一频道累计多次净点踩后，才会生成频道级回避提示
-5. 默认拉取最近 `LOOKBACK_HOURS` 内的 AI HOT 精选，先按用户偏好做本地二次排序，再和 YouTube 推荐合并到同一张卡片；如果当天没有符合条件的视频但 AI HOT 有内容，也会发送 AI HOT 卡片
+4. YouTube 和 AI HOT 都提供 👍/👎 一键反馈；回调先返回成功提示，再异步写入 `feedback.json`
+   - 每天只分析新增点击，提取主题、内容形态、价值和来源四类弱信号，避免旧反馈被重复累计
+   - 单次点击只进入短期偏好；每满 7 天自动归纳一次，至少 2 条不同内容形成同向证据才会升级为稳定偏好
+   - 点踩“入门教程”只降低这种内容形态，不会连带惩罚 Agent 等上层主题
+5. 默认拉取最近 `LOOKBACK_HOURS` 内的 AI HOT 候选，经过质量门槛和个性化筛选后最多选 7 条，也允许 0 条；优先 Agent / Loop Engineering、硅谷前沿趋势和有产品或商业价值的内容，排除节日营销、转售拼接新闻与普通 API/安装教程
+   - AI HOT 卡片只显示标题、分段摘要和原文链接，不展示来源、时间、分数或分类
 6. 如果当天没有符合条件的视频且 AI HOT 也无内容，默认只写日志；需要状态卡时可开启 `FEISHU_SEND_STATUS_CARD`
 7. 每条视频包含：频道名、时长、播放量、推荐理由、摘要、原视频链接
 
@@ -78,7 +80,8 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 | 排序 LLM | Gemini 3 Flash | 智能筛选排序（摘要 LLM 兜底） |
 | 摘要 LLM | 360 DeepSeek v4 Flash | 通过 OpenAI 兼容 API 调用 |
 | 推送 | 飞书开放平台应用 | tenant_access_token → 个人或群消息 |
-| 反馈 | 飞书卡片回调 + Cloudflare Worker | 按钮点击 → GitHub data 分支 feedback.json |
+| 反馈 | 飞书卡片回调 + Cloudflare Worker | YouTube / AI HOT 按钮点击 → GitHub data 分支 |
+| 偏好学习 | Gemini + 增量状态机 | 每日轻量更新，满 7 天自动归纳稳定偏好 |
 | 调度 | GitHub Actions | 每日北京时间 09:30 自动运行 |
 | 去重 | history.json | 存储在 Git `data` 分支，自动清理 30 天前记录 |
 
@@ -89,7 +92,9 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 ├── channels.json                    # 76 个订阅频道（channel_id + name）
 ├── requirements.txt                 # 依赖：requests, yt-dlp, google-genai
 ├── history.json                     # 已处理视频 ID + 时间戳（运行时生成，自动清理 30 天前记录）
-├── update_preferences.py            # 从 feedback.json 生成动态排序提示
+├── preference_learning.py           # 偏好去重、衰减与每日/每周状态转换
+├── preference_state.json            # 增量偏好状态（运行时生成，保存在 data 分支）
+├── update_preferences.py            # 分析新增反馈并生成动态排序提示
 ├── worker/                          # 飞书卡片点击反馈回调 Worker
 ├── .github/workflows/digest.yml     # GitHub Actions 定时任务
 ├── FEISHU_APP_SETUP.md              # 飞书应用配置指南
@@ -108,7 +113,7 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 | `MINIMAX_API_KEY` | 是 | - | 摘要 LLM API Key（变量名保留兼容旧部署） |
 | `MINIMAX_API_BASE` | 否 | `https://api.360.cn/v1` | 摘要 LLM OpenAI 兼容 Base URL |
 | `MINIMAX_MODEL` | 否 | `deepseek/deepseek-v4-flash` | 摘要 LLM 模型名 |
-| `GEMINI_API_KEY` | 是 | - | Gemini API Key（智能排序） |
+| `GEMINI_API_KEY` | 是 | - | Gemini API Key（智能排序、AI HOT 质量筛选、反馈理解） |
 | `YOUTUBE_API_KEY` | 是 | - | YouTube Data API Key |
 | `FEISHU_WEBHOOK_URL` | 否 | - | 群自定义机器人兜底通道，不支持点击反馈 |
 | `FEISHU_SEND_STATUS_CARD` | 否 | `false` | 无候选/无推荐时是否推送状态卡；默认关闭，避免重复触发时多一条消息 |
@@ -117,7 +122,7 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 | `TOP_N` | 否 | `3` | 每日推送视频数量 |
 | `LOOKBACK_HOURS` | 否 | `24` | 回溯时间窗口（小时） |
 | `AIHOT_ENABLED` | 否 | `true` | 是否合并 AI HOT 精选资讯 |
-| `AIHOT_TAKE` | 否 | `5` | 每次最多合并的 AI HOT 条数，最大 20 |
+| `AIHOT_TAKE` | 否 | `7` | 每次最多合并的 AI HOT 条数，允许少于该值或 0 条，最大 20 |
 | `AIHOT_CANDIDATE_TAKE` | 否 | `30` | AI HOT 二次排序前拉取的候选池大小，最大 100 |
 | `AIHOT_MIN_SCORE` | 否 | `0` | AI HOT 最低分数门槛；默认不过滤 |
 | `AIHOT_API_BASE` | 否 | `https://aihot.virxact.com` | AI HOT API Base，一般不用改 |
@@ -134,7 +139,7 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 2. Settings → Secrets → Actions → 添加必填环境变量（FEISHU_APP_ID, FEISHU_APP_SECRET, MINIMAX_API_KEY, GEMINI_API_KEY, YOUTUBE_API_KEY），并配置 `FEISHU_CHAT_ID` 或 `FEISHU_USER_ID`；如需覆盖默认摘要模型，可额外配置 `MINIMAX_API_BASE`、`MINIMAX_MODEL`
 3. Actions → YouTube Digest Daily → Run workflow 手动测试
 4. 之后每天北京时间 09:30 (UTC 01:30) 自动运行
-5. `history.json` 自动保存在 `data` 分支，跨次运行去重
+5. `history.json`、`feedback.json` 和 `preference_state.json` 自动保存在 `data` 分支，用于跨次去重与持续偏好学习
 6. 如需点击反馈，部署 `worker/` 并在飞书开放平台配置卡片回调地址
 
 ### 本地运行
