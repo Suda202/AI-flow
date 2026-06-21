@@ -43,9 +43,9 @@ class PreferenceClassificationTests(unittest.TestCase):
             "choices": [{"message": {"content": '{"events":[]}'}}]
         }
         with (
-            patch.object(update_preferences, "MINIMAX_API_KEY", "test-key"),
-            patch.object(update_preferences, "MINIMAX_API_BASE", "https://api.example.test"),
-            patch.object(update_preferences, "MINIMAX_MODEL", "deepseek-v4-flash"),
+            patch.object(update_preferences, "DEEPSEEK_API_KEY", "test-key"),
+            patch.object(update_preferences, "DEEPSEEK_API_BASE", "https://api.example.test"),
+            patch.object(update_preferences, "DEEPSEEK_MODEL", "deepseek-v4-flash"),
             patch.object(update_preferences.requests, "post", return_value=response) as post,
         ):
             self.assertEqual(call_llm("prompt"), '{"events":[]}')

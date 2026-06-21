@@ -47,10 +47,9 @@ FEISHU_USER_ID = os.environ.get("FEISHU_USER_ID", "")  # 目标用户 ID (ou_xxx
 FEISHU_CHAT_ID = os.environ.get("FEISHU_CHAT_ID", "")  # 目标群 ID (oc_xxxxx)
 FEISHU_WEBHOOK_URL = os.environ.get("FEISHU_WEBHOOK_URL", "")  # 群自定义机器人 Webhook（仅兜底，无点击回调）
 FEISHU_SEND_STATUS_CARD = env_bool("FEISHU_SEND_STATUS_CARD")
-# 变量名保留 MINIMAX，避免改动现有 Secrets；实际走 OpenAI 兼容摘要 LLM。
-MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
-MINIMAX_API_BASE = (os.environ.get("MINIMAX_API_BASE") or "https://api.deepseek.com").rstrip("/")
-MINIMAX_MODEL = os.environ.get("MINIMAX_MODEL") or "deepseek-v4-flash"
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_BASE = (os.environ.get("DEEPSEEK_API_BASE") or "https://api.deepseek.com").rstrip("/")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL") or "deepseek-v4-flash"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 MIN_DURATION_MINUTES = env_int("MIN_DURATION_MINUTES", 3, min_value=1)  # 过滤 Shorts（<=3min）
 TOP_N = env_int("TOP_N", 3, min_value=1)  # 每日推送 Top N 视频
@@ -562,7 +561,7 @@ def select_aihot_items_for_profile(
         if len(deterministic) >= item_limit:
             break
 
-    if not MINIMAX_API_KEY or not deterministic:
+    if not DEEPSEEK_API_KEY or not deterministic:
         return deterministic
 
     prompt_items = [{
@@ -909,8 +908,8 @@ def get_transcript(video_id: str) -> str | None:
 # ============ 摘要 LLM ============
 def summarize_with_llm(title: str, author: str, content: str, content_type: str = "字幕") -> dict:
     """基于字幕或描述生成结构化摘要"""
-    if not MINIMAX_API_KEY:
-        return {"summary": "⚠️ 未配置 MINIMAX_API_KEY，跳过摘要"}
+    if not DEEPSEEK_API_KEY:
+        return {"summary": "⚠️ 未配置 DEEPSEEK_API_KEY，跳过摘要"}
 
     if len(content) > 80000:
         content = content[:80000] + "\n...[truncated]"
@@ -941,24 +940,24 @@ def summarize_with_llm(title: str, author: str, content: str, content_type: str 
 
 
 def llm_chat_completions_url() -> str:
-    if MINIMAX_API_BASE.endswith("/chat/completions"):
-        return MINIMAX_API_BASE
-    return f"{MINIMAX_API_BASE}/chat/completions"
+    if DEEPSEEK_API_BASE.endswith("/chat/completions"):
+        return DEEPSEEK_API_BASE
+    return f"{DEEPSEEK_API_BASE}/chat/completions"
 
 
 def call_llm(prompt: str, max_tokens: int = 1024) -> str | None:
     """调用 OpenAI 兼容摘要 LLM，返回文本结果"""
-    if not MINIMAX_API_KEY:
+    if not DEEPSEEK_API_KEY:
         return None
     try:
         resp = requests.post(
             llm_chat_completions_url(),
             headers={
-                "Authorization": f"Bearer {MINIMAX_API_KEY}",
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": MINIMAX_MODEL,
+                "model": DEEPSEEK_MODEL,
                 "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}],
             },

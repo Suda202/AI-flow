@@ -30,7 +30,7 @@ class AihotIntegrationTests(unittest.TestCase):
         }]
 
         with (
-            mock.patch.object(main, "MINIMAX_API_KEY", "test-key"),
+            mock.patch.object(main, "DEEPSEEK_API_KEY", "test-key"),
             mock.patch.object(
                 main,
                 "call_llm",

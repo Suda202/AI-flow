@@ -38,7 +38,7 @@ class SummarySafetyTests(unittest.TestCase):
             ]
         }
 
-        with patch.object(main, "MINIMAX_API_KEY", "test-key"), patch("main.requests.post", return_value=response):
+        with patch.object(main, "DEEPSEEK_API_KEY", "test-key"), patch("main.requests.post", return_value=response):
             self.assertIsNone(main.call_llm("prompt"))
 
     def test_call_llm_extracts_text_after_thinking_blocks(self):
@@ -50,7 +50,7 @@ class SummarySafetyTests(unittest.TestCase):
             ]
         }
 
-        with patch.object(main, "MINIMAX_API_KEY", "test-key"), patch("main.requests.post", return_value=response):
+        with patch.object(main, "DEEPSEEK_API_KEY", "test-key"), patch("main.requests.post", return_value=response):
             self.assertEqual(main.call_llm("prompt"), "结论：值得看。\n适合：产品判断")
 
     def test_call_llm_uses_openai_compatible_chat_completions(self):
@@ -68,9 +68,9 @@ class SummarySafetyTests(unittest.TestCase):
         }
 
         with (
-            patch.object(main, "MINIMAX_API_KEY", "test-key"),
-            patch.object(main, "MINIMAX_API_BASE", "https://api.example.test/v1"),
-            patch.object(main, "MINIMAX_MODEL", "test-model"),
+            patch.object(main, "DEEPSEEK_API_KEY", "test-key"),
+            patch.object(main, "DEEPSEEK_API_BASE", "https://api.example.test/v1"),
+            patch.object(main, "DEEPSEEK_MODEL", "test-model"),
             patch("main.requests.post", return_value=response) as post,
         ):
             self.assertEqual(main.call_llm("prompt"), "结论：值得看。\n适合：产品判断")

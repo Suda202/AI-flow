@@ -507,7 +507,7 @@ git commit -m "feat: learn from AI HOT feedback"
 
 **Interfaces:**
 - Persists: `preference_state.json` on the `data` branch.
-- Supplies: `MINIMAX_API_KEY`, `MINIMAX_API_BASE`, and `MINIMAX_MODEL` to preference analysis.
+- Supplies: `DEEPSEEK_API_KEY`, `DEEPSEEK_API_BASE`, and `DEEPSEEK_MODEL` to preference analysis.
 
 - [ ] **Step 1: Update workflow restore defaults**
 
@@ -518,9 +518,9 @@ Add `preference_state.json` to the restore/save list and initialize it with `{}`
 ```yaml
 - name: Analyze feedback and update preferences
   env:
-    MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
-    MINIMAX_API_BASE: ${{ secrets.MINIMAX_API_BASE }}
-    MINIMAX_MODEL: ${{ secrets.MINIMAX_MODEL }}
+    DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    DEEPSEEK_API_BASE: ${{ secrets.DEEPSEEK_API_BASE }}
+    DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
   run: python update_preferences.py
 ```
 

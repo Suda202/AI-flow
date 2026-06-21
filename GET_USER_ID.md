@@ -135,7 +135,7 @@ export FEISHU_USER_ID="ou_xxxxx"
 export FEISHU_APP_ID="cli_xxxxx"
 export FEISHU_APP_SECRET="xxxxx"
 export FEISHU_USER_ID="ou_xxxxx"
-export MINIMAX_API_KEY="xxxxx"
+export DEEPSEEK_API_KEY="xxxxx"
 export YOUTUBE_API_KEY="AIzaXxx"
 
 python main.py

@@ -28,9 +28,9 @@ FEEDBACK_FILE = os.environ.get("FEEDBACK_FILE", "feedback.json")
 PROFILE_FILE = os.environ.get("PROFILE_FILE", "profile.json")
 PREFERENCE_STATE_FILE = os.environ.get("PREFERENCE_STATE_FILE", "preference_state.json")
 RANKING_HINTS_FILE = os.environ.get("RANKING_HINTS_FILE", "ranking_hints.txt")
-MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
-MINIMAX_API_BASE = (os.environ.get("MINIMAX_API_BASE") or "https://api.deepseek.com").rstrip("/")
-MINIMAX_MODEL = os.environ.get("MINIMAX_MODEL") or "deepseek-v4-flash"
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_BASE = (os.environ.get("DEEPSEEK_API_BASE") or "https://api.deepseek.com").rstrip("/")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL") or "deepseek-v4-flash"
 
 MAX_FACETS_PER_GROUP = 4
 VALUE_TAGS = {"前沿趋势", "实用方法", "方法论", "商业价值", "深度洞察", "硅谷热点"}
@@ -173,17 +173,17 @@ def _classification_prompt(events: list[dict]) -> str:
 
 
 def call_llm(prompt: str) -> str | None:
-    if not MINIMAX_API_KEY:
+    if not DEEPSEEK_API_KEY:
         return None
     try:
         response = requests.post(
-            f"{MINIMAX_API_BASE}/chat/completions",
+            f"{DEEPSEEK_API_BASE}/chat/completions",
             headers={
-                "Authorization": f"Bearer {MINIMAX_API_KEY}",
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
                 "Content-Type": "application/json",
             },
             json={
-                "model": MINIMAX_MODEL,
+                "model": DEEPSEEK_MODEL,
                 "max_tokens": 1024,
                 "messages": [{"role": "user", "content": prompt}],
             },

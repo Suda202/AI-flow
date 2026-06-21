@@ -65,9 +65,9 @@ export FEISHU_CHAT_ID="oc_xxxxx"   # 目标群聊 ID，推荐
 export FEISHU_USER_ID="ou_xxxxx"
 
 # 其他配置
-export MINIMAX_API_KEY="xxxxx"
-export MINIMAX_API_BASE="https://api.deepseek.com"
-export MINIMAX_MODEL="deepseek-v4-flash"
+export DEEPSEEK_API_KEY="xxxxx"
+export DEEPSEEK_API_BASE="https://api.deepseek.com"
+export DEEPSEEK_MODEL="deepseek-v4-flash"
 export YOUTUBE_API_KEY="AIzaXxx"
 ```
 
