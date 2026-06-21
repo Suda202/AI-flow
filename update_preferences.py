@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import requests
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -27,7 +28,9 @@ FEEDBACK_FILE = os.environ.get("FEEDBACK_FILE", "feedback.json")
 PROFILE_FILE = os.environ.get("PROFILE_FILE", "profile.json")
 PREFERENCE_STATE_FILE = os.environ.get("PREFERENCE_STATE_FILE", "preference_state.json")
 RANKING_HINTS_FILE = os.environ.get("RANKING_HINTS_FILE", "ranking_hints.txt")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
+MINIMAX_API_BASE = (os.environ.get("MINIMAX_API_BASE") or "https://api.deepseek.com").rstrip("/")
+MINIMAX_MODEL = os.environ.get("MINIMAX_MODEL") or "deepseek-v4-flash"
 
 MAX_FACETS_PER_GROUP = 4
 VALUE_TAGS = {"前沿趋势", "实用方法", "方法论", "商业价值", "深度洞察", "硅谷热点"}
@@ -91,7 +94,7 @@ def parse_classification_response(raw: str | None, expected_event_ids: set[str])
 
 
 def deterministic_classify_event(event: dict) -> dict[str, list[str]]:
-    """Conservative fallback used when Gemini is unavailable or returns invalid JSON."""
+    """Conservative fallback used when the model is unavailable or returns invalid JSON."""
     title = str(event.get("title") or "")
     creator = str(event.get("creator") or "")
     category = str(event.get("category") or "")
@@ -169,20 +172,33 @@ def _classification_prompt(events: list[dict]) -> str:
 """
 
 
-def call_gemini(prompt: str) -> str | None:
-    if not GEMINI_API_KEY:
+def call_llm(prompt: str) -> str | None:
+    if not MINIMAX_API_KEY:
         return None
     try:
-        from google import genai
-
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=prompt,
+        response = requests.post(
+            f"{MINIMAX_API_BASE}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {MINIMAX_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": MINIMAX_MODEL,
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=60,
         )
-        return response.text
+        data = response.json()
+        if data.get("error") or response.status_code >= 400:
+            return None
+        choices = data.get("choices", [])
+        if not choices:
+            return None
+        content = choices[0].get("message", {}).get("content")
+        return content.strip() if isinstance(content, str) else None
     except Exception as error:
-        print(f"  ⚠️ Gemini 偏好分类失败，使用本地兜底: {error}")
+        print(f"  ⚠️ DeepSeek 偏好分类失败，使用本地兜底: {error}")
         return None
 
 
@@ -192,7 +208,7 @@ def classify_events(
 ) -> list[dict]:
     if not events:
         return []
-    model_call = model_call or call_gemini
+    model_call = model_call or call_llm
     expected_ids = {str(event.get("event_id") or "") for event in events}
     try:
         raw = model_call(_classification_prompt(events))

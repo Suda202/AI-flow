@@ -6,7 +6,7 @@
 
 **Architecture:** Reuse the existing Feishu callback Worker and GitHub `data` branch. Store raw feedback in the existing `feedback.json`, keep idempotent learning state in a new `preference_state.json`, update short-term weights daily and stable weights every seven days, then feed generated `ranking_hints.txt` into both selectors. Keep AI HOT selection quality-gated with dedicated Agent, frontier-trend, and business-value lanes.
 
-**Tech Stack:** Python 3.12, `unittest`, `google-genai`, Feishu interactive cards, Cloudflare Worker JavaScript, GitHub Actions, JSON files on the `data` branch.
+**Tech Stack:** Python 3.12, `unittest`, DeepSeek OpenAI-compatible API, Feishu interactive cards, Cloudflare Worker JavaScript, GitHub Actions, JSON files on the `data` branch.
 
 ## Global Constraints
 
@@ -25,12 +25,12 @@
 
 - Create `preference_learning.py`: pure normalization, idempotence, decay, daily update, weekly consolidation, and ranking-hint functions.
 - Create `tests/test_preference_learning.py`: deterministic regression coverage for incremental and weekly learning.
-- Modify `update_preferences.py`: file I/O and Gemini classification CLI around `preference_learning.py`.
+- Modify `update_preferences.py`: file I/O and DeepSeek classification CLI around `preference_learning.py`.
 - Modify `main.py`: AI HOT quality selector, preference hints, feedback buttons, and channel-specific card building.
 - Modify `tests/test_aihot_integration.py`: Agent/trend quality fixtures and AI HOT feedback-card tests.
 - Modify `worker/src/index.js`: accept generic content metadata and persist event IDs in Cloudflare Worker.
 - Modify `worker/src/vercel-handler.js`: keep Vercel callback behavior in parity.
-- Modify `.github/workflows/digest.yml`: restore/save `preference_state.json` and expose Gemini to preference analysis.
+- Modify `.github/workflows/digest.yml`: restore/save `preference_state.json` and expose DeepSeek to preference analysis.
 - Modify `README.md`: document feedback learning and new runtime data file.
 
 ---
@@ -248,7 +248,7 @@ git commit -m "feat: add incremental preference state"
 
 ---
 
-### Task 2: Gemini Classification and CLI Orchestration
+### Task 2: DeepSeek Classification and CLI Orchestration
 
 **Files:**
 - Modify: `update_preferences.py`
@@ -280,7 +280,7 @@ Run: `python3 -m unittest tests.test_preference_learning -v`
 
 Expected: missing parser/classifier failure.
 
-- [ ] **Step 3: Implement one batched Gemini call with deterministic fallback**
+- [ ] **Step 3: Implement one batched DeepSeek call with deterministic fallback**
 
 The prompt must:
 
@@ -289,7 +289,7 @@ The prompt must:
 - Keep Agent practical tutorials separate from generic beginner/API tutorials.
 - Return a JSON array only.
 
-If Gemini is missing or invalid, call the existing deterministic `infer_topics` mapping and add format/value keyword rules. Events with no reliable facets remain unprocessed.
+If DeepSeek is missing or invalid, call the existing deterministic `infer_topics` mapping and add format/value keyword rules. Events with no reliable facets remain unprocessed.
 
 - [ ] **Step 4: Replace repeated full-history accumulation**
 
@@ -469,15 +469,15 @@ def test_quality_selector_keeps_agent_frontier_and_rejects_filler():
     assert [x["title"] for x in selected] == ["Loop Engineering", "Deep Agents 实战"]
 ```
 
-- [ ] **Step 5: Implement Gemini quality gate and conservative fallback**
+- [ ] **Step 5: Implement DeepSeek quality gate and conservative fallback**
 
-Gemini prompt must expose three independent lanes:
+DeepSeek prompt must expose three independent lanes:
 
 - Agent priority.
 - Silicon Valley frontier trend.
 - Business value.
 
-It must explicitly allow practical Agent tutorials, reject generic beginner/API/code-along tutorials, and return at most seven indices in JSON. If Gemini fails, deterministic fallback requires a strong lane match plus source score at least 70 and excludes known filler patterns. Never return all candidates merely because fewer than seven exist.
+It must explicitly allow practical Agent tutorials, reject generic beginner/API/code-along tutorials, and return at most seven indices in JSON. If DeepSeek fails, deterministic fallback requires a strong lane match plus source score at least 70 and excludes known filler patterns. Never return all candidates merely because fewer than seven exist.
 
 - [ ] **Step 6: Run AI HOT and full tests**
 
@@ -507,7 +507,7 @@ git commit -m "feat: learn from AI HOT feedback"
 
 **Interfaces:**
 - Persists: `preference_state.json` on the `data` branch.
-- Supplies: `GEMINI_API_KEY` to preference analysis.
+- Supplies: `MINIMAX_API_KEY`, `MINIMAX_API_BASE`, and `MINIMAX_MODEL` to preference analysis.
 
 - [ ] **Step 1: Update workflow restore defaults**
 
@@ -518,7 +518,9 @@ Add `preference_state.json` to the restore/save list and initialize it with `{}`
 ```yaml
 - name: Analyze feedback and update preferences
   env:
-    GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+    MINIMAX_API_BASE: ${{ secrets.MINIMAX_API_BASE }}
+    MINIMAX_MODEL: ${{ secrets.MINIMAX_MODEL }}
   run: python update_preferences.py
 ```
 

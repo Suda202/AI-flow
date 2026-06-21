@@ -49,9 +49,8 @@ FEISHU_WEBHOOK_URL = os.environ.get("FEISHU_WEBHOOK_URL", "")  # 群自定义机
 FEISHU_SEND_STATUS_CARD = env_bool("FEISHU_SEND_STATUS_CARD")
 # 变量名保留 MINIMAX，避免改动现有 Secrets；实际走 OpenAI 兼容摘要 LLM。
 MINIMAX_API_KEY = os.environ.get("MINIMAX_API_KEY", "")
-MINIMAX_API_BASE = (os.environ.get("MINIMAX_API_BASE") or "https://api.360.cn/v1").rstrip("/")
-MINIMAX_MODEL = os.environ.get("MINIMAX_MODEL") or "deepseek/deepseek-v4-flash"
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+MINIMAX_API_BASE = (os.environ.get("MINIMAX_API_BASE") or "https://api.deepseek.com").rstrip("/")
+MINIMAX_MODEL = os.environ.get("MINIMAX_MODEL") or "deepseek-v4-flash"
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
 MIN_DURATION_MINUTES = env_int("MIN_DURATION_MINUTES", 3, min_value=1)  # 过滤 Shorts（<=3min）
 TOP_N = env_int("TOP_N", 3, min_value=1)  # 每日推送 Top N 视频
@@ -563,7 +562,7 @@ def select_aihot_items_for_profile(
         if len(deterministic) >= item_limit:
             break
 
-    if not GEMINI_API_KEY or not deterministic:
+    if not MINIMAX_API_KEY or not deterministic:
         return deterministic
 
     prompt_items = [{
@@ -579,7 +578,7 @@ def select_aihot_items_for_profile(
 只返回 JSON：{{"selected_ids":["id"]}}
 """
     selected_ids = parse_aihot_selection_response(
-        call_gemini(prompt),
+        call_llm(prompt),
         {str(item.get("id") or "") for item in deterministic},
     )
     if selected_ids is None:
@@ -1032,23 +1031,6 @@ def extract_llm_text_block(block) -> str:
     return ""
 
 
-def call_gemini(prompt: str) -> str | None:
-    """调用 Gemini 模型，用于排序任务"""
-    if not GEMINI_API_KEY:
-        return None
-    try:
-        from google import genai
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=prompt,
-        )
-        return response.text
-    except Exception as e:
-        print(f"  ⚠️ Gemini call failed: {e}")
-        return None
-
-
 def rank_candidates(candidates: list[dict], top_n: int, profile: dict) -> list[dict]:
     """用 LLM 从候选视频中挑选最值得深度观看的 Top N，返回 [{index, reason}]"""
     video_list = []
@@ -1132,12 +1114,9 @@ def rank_candidates(candidates: list[dict], top_n: int, profile: dict) -> list[d
 
 最多输出 {top_n} 行，不要其他文字。"""
 
-    result = call_gemini(prompt)
+    result = call_llm(prompt, max_tokens=500)
     if not result:
-        print("  ⚠️ Gemini 排序失败，尝试摘要 LLM...")
-        result = call_llm(prompt, max_tokens=500)
-    if not result:
-        print("  ⚠️ LLM 排序全部失败，回退到播放量排序")
+        print("  ⚠️ DeepSeek 排序失败，回退到播放量排序")
         candidates.sort(key=lambda v: v["view_count"], reverse=True)
         return [{"index": i, "reason": ""} for i in range(min(top_n, len(candidates)))]
 

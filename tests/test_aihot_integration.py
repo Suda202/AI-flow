@@ -18,6 +18,30 @@ class FakeResponse:
 
 
 class AihotIntegrationTests(unittest.TestCase):
+    def test_aihot_model_selection_uses_configured_summary_llm(self):
+        items = [{
+            "id": "agent-workflow",
+            "title": "Agentic Engineering workflow for coding agents",
+            "summary": "A practical workflow for AI product teams.",
+            "source": "Example",
+            "category": "ai-products",
+            "score": 88,
+            "url": "https://example.com/agent-workflow",
+        }]
+
+        with (
+            mock.patch.object(main, "MINIMAX_API_KEY", "test-key"),
+            mock.patch.object(
+                main,
+                "call_llm",
+                return_value='{"selected_ids":["agent-workflow"]}',
+            ) as call_llm,
+        ):
+            selected = main.select_aihot_items_for_profile(items, take=1)
+
+        self.assertEqual([item["id"] for item in selected], ["agent-workflow"])
+        call_llm.assert_called_once()
+
     def test_fetch_aihot_items_uses_selected_window_and_skill_user_agent(self):
         fetch_aihot_items = getattr(main, "fetch_aihot_items", None)
         if fetch_aihot_items is None:

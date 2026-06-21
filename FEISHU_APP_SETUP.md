@@ -66,7 +66,8 @@ export FEISHU_USER_ID="ou_xxxxx"
 
 # 其他配置
 export MINIMAX_API_KEY="xxxxx"
-export GEMINI_API_KEY="xxxxx"
+export MINIMAX_API_BASE="https://api.deepseek.com"
+export MINIMAX_MODEL="deepseek-v4-flash"
 export YOUTUBE_API_KEY="AIzaXxx"
 ```
 

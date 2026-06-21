@@ -49,7 +49,9 @@ jobs:
 
       - name: Analyze feedback and update preferences
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          MINIMAX_API_BASE: ${{ secrets.MINIMAX_API_BASE }}
+          MINIMAX_MODEL: ${{ secrets.MINIMAX_MODEL }}
         run: python update_preferences.py
 
       - name: Run digest
@@ -61,7 +63,6 @@ jobs:
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
           MINIMAX_API_BASE: ${{ secrets.MINIMAX_API_BASE }}
           MINIMAX_MODEL: ${{ secrets.MINIMAX_MODEL }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           YT_COOKIES_FILE: cookies.txt

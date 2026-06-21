@@ -12,14 +12,14 @@
 ## 核心逻辑：三阶段流水线
 
 ```
-阶段一：收集候选            阶段二：预过滤 + Gemini 排序     阶段三：摘要 + 推送
+阶段一：收集候选            阶段二：预过滤 + DeepSeek 排序   阶段三：摘要 + 推送
 
 76个频道 RSS 并发轮询       硬规则预过滤                     Top N 视频
     ↓                        ↓                               ↓
-过滤 Shorts(<3min)         Gemini 3 Flash 智能排序          yt-dlp 获取字幕
+过滤 Shorts(<3min)         DeepSeek v4 Flash 智能排序       yt-dlp 获取字幕
     ↓                        ↓                               ↓
-YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 生成中文摘要
-(时长+描述+播放量)          (失败→摘要 LLM→播放量排序)        ↓
+YouTube Data API            输出 Top N + 推荐理由            DeepSeek 生成中文摘要
+(时长+描述+播放量)          (失败→播放量排序)                 ↓
                                                             合并 AI HOT 精选
                                                             ↓
                                                             飞书日报合并推送
@@ -32,7 +32,7 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 3. 同时获取每个视频的 description 和播放量，作为后续排序和摘要的输入
 4. 通过 `history.json` 去重，避免重复推送
 
-### 阶段二：预过滤 + Gemini 智能排序（核心）
+### 阶段二：预过滤 + DeepSeek 智能排序（核心）
 
 **硬规则预过滤**（在 LLM 排序前剔除明显不符合的候选）：
 - 排除入门教程/全课程（标题匹配 "Full Course", "Tutorial For Beginners" 等）
@@ -40,7 +40,7 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 - 排除明显偏投资/金融（股票、估值、融资、portfolio 等）和纯技术实现（论文精读、代码、API、RAG 调参等）的标题或描述
 - 对偏投资或偏技术频道做频道级过滤，只保留明确相关的 AI 产品、GTM、SaaS、创意/广告、客户案例或工作流内容
 
-**Gemini 智能排序**：将预过滤后的候选视频列表（含标题、频道、时长、播放量、description 前 300 字）交给 Gemini 3 Flash，由 LLM 根据用户画像挑选最多 Top N 并给出推荐理由。默认宁缺毋滥，达不到标准时可以少选。
+**DeepSeek 智能排序**：将预过滤后的候选视频列表（含标题、频道、时长、播放量、description 前 300 字）交给 DeepSeek v4 Flash，由 LLM 根据用户画像挑选最多 Top N 并给出推荐理由。默认宁缺毋滥，达不到标准时可以少选。
 
 **用户画像**（内置于 prompt）：
 - AI 产品经理，关注 AI 产品设计、用户体验、商业化、广告创意智能体、海外市场和产品策略
@@ -54,12 +54,12 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 - 纯技术细节：论文精读、代码实现、模型架构、框架/API 教程、RAG/向量库调参
 - 与 AI/科技行业无关的内容
 
-**容错**：Gemini 调用失败 → 摘要 LLM 兜底 → 播放量排序。
+**容错**：DeepSeek 调用失败 → 播放量排序。
 
 ### 阶段三：摘要生成 + 飞书推送
 
 1. 对 Top N 视频，优先用 yt-dlp 获取字幕生成摘要（内容最完整），字幕不可用时 fallback 到 description
-2. 360 DeepSeek v4 Flash 生成短摘要：结论 + 最多 3 个要点 + 适合场景，默认控制在 350 中文字符以内
+2. DeepSeek v4 Flash 生成短摘要：结论 + 最多 3 个要点 + 适合场景，默认控制在 350 中文字符以内
 3. 所有视频合并为一条"今日推荐"日报，优先通过飞书应用机器人推送
 4. YouTube 和 AI HOT 都提供 👍/👎 一键反馈；回调先返回成功提示，再异步写入 `feedback.json`
    - 每天只分析新增点击，提取主题、内容形态、价值和来源四类弱信号，避免旧反馈被重复累计
@@ -77,11 +77,10 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 | 视频源 | YouTube RSS + Data API v3 | RSS 并发轮询 + API 补充详情 |
 | AI 资讯 | AI HOT Public API | 拉取最近精选 AI 动态，无需 API Key |
 | 字幕 | yt-dlp | 获取视频字幕用于摘要生成 |
-| 排序 LLM | Gemini 3 Flash | 智能筛选排序（摘要 LLM 兜底） |
-| 摘要 LLM | 360 DeepSeek v4 Flash | 通过 OpenAI 兼容 API 调用 |
+| 排序与摘要 LLM | DeepSeek v4 Flash | 通过 OpenAI 兼容 API 调用 |
 | 推送 | 飞书开放平台应用 | tenant_access_token → 个人或群消息 |
 | 反馈 | 飞书卡片回调 + Cloudflare Worker | YouTube / AI HOT 按钮点击 → GitHub data 分支 |
-| 偏好学习 | Gemini + 增量状态机 | 每日轻量更新，满 7 天自动归纳稳定偏好 |
+| 偏好学习 | DeepSeek + 增量状态机 | 每日轻量更新，满 7 天自动归纳稳定偏好 |
 | 调度 | GitHub Actions | 每日北京时间 09:30 自动运行 |
 | 去重 | history.json | 存储在 Git `data` 分支，自动清理 30 天前记录 |
 
@@ -90,7 +89,7 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 ```
 ├── main.py                          # 核心脚本（三阶段流水线）
 ├── channels.json                    # 76 个订阅频道（channel_id + name）
-├── requirements.txt                 # 依赖：requests, yt-dlp, google-genai
+├── requirements.txt                 # 依赖：requests, yt-dlp
 ├── history.json                     # 已处理视频 ID + 时间戳（运行时生成，自动清理 30 天前记录）
 ├── preference_learning.py           # 偏好去重、衰减与每日/每周状态转换
 ├── preference_state.json            # 增量偏好状态（运行时生成，保存在 data 分支）
@@ -110,10 +109,9 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 | `FEISHU_APP_SECRET` | 是 | - | 飞书应用 App Secret |
 | `FEISHU_USER_ID` | 否 | - | 推送目标用户 ID；未配置 `FEISHU_CHAT_ID` 时使用 |
 | `FEISHU_CHAT_ID` | 否 | - | 推送目标群 ID；配置后优先发群聊 |
-| `MINIMAX_API_KEY` | 是 | - | 摘要 LLM API Key（变量名保留兼容旧部署） |
-| `MINIMAX_API_BASE` | 否 | `https://api.360.cn/v1` | 摘要 LLM OpenAI 兼容 Base URL |
-| `MINIMAX_MODEL` | 否 | `deepseek/deepseek-v4-flash` | 摘要 LLM 模型名 |
-| `GEMINI_API_KEY` | 是 | - | Gemini API Key（智能排序、AI HOT 质量筛选、反馈理解） |
+| `MINIMAX_API_KEY` | 是 | - | DeepSeek API Key（变量名保留兼容旧部署） |
+| `MINIMAX_API_BASE` | 否 | `https://api.deepseek.com` | DeepSeek OpenAI 兼容 Base URL |
+| `MINIMAX_MODEL` | 否 | `deepseek-v4-flash` | 排序、摘要和偏好分析模型名 |
 | `YOUTUBE_API_KEY` | 是 | - | YouTube Data API Key |
 | `FEISHU_WEBHOOK_URL` | 否 | - | 群自定义机器人兜底通道，不支持点击反馈 |
 | `FEISHU_SEND_STATUS_CARD` | 否 | `false` | 无候选/无推荐时是否推送状态卡；默认关闭，避免重复触发时多一条消息 |
@@ -136,7 +134,7 @@ YouTube Data API            输出 Top N + 推荐理由            360 DeepSeek 
 ### GitHub Actions（推荐）
 
 1. Fork 本仓库
-2. Settings → Secrets → Actions → 添加必填环境变量（FEISHU_APP_ID, FEISHU_APP_SECRET, MINIMAX_API_KEY, GEMINI_API_KEY, YOUTUBE_API_KEY），并配置 `FEISHU_CHAT_ID` 或 `FEISHU_USER_ID`；如需覆盖默认摘要模型，可额外配置 `MINIMAX_API_BASE`、`MINIMAX_MODEL`
+2. Settings → Secrets → Actions → 添加必填环境变量（FEISHU_APP_ID, FEISHU_APP_SECRET, MINIMAX_API_KEY, YOUTUBE_API_KEY），并配置 `FEISHU_CHAT_ID` 或 `FEISHU_USER_ID`；如需覆盖默认模型，可额外配置 `MINIMAX_API_BASE`、`MINIMAX_MODEL`
 3. Actions → YouTube Digest Daily → Run workflow 手动测试
 4. 之后每天北京时间 09:30 (UTC 01:30) 自动运行
 5. `history.json`、`feedback.json` 和 `preference_state.json` 自动保存在 `data` 分支，用于跨次去重与持续偏好学习
@@ -151,9 +149,8 @@ export FEISHU_APP_ID="cli_xxxxx"
 export FEISHU_APP_SECRET="xxxxx"
 export FEISHU_CHAT_ID="oc_xxxxx"  # 或 FEISHU_USER_ID="ou_xxxxx"
 export MINIMAX_API_KEY="xxxxx"
-export MINIMAX_API_BASE="https://api.360.cn/v1"
-export MINIMAX_MODEL="deepseek/deepseek-v4-flash"
-export GEMINI_API_KEY="AIzaXxx"
+export MINIMAX_API_BASE="https://api.deepseek.com"
+export MINIMAX_MODEL="deepseek-v4-flash"
 export YOUTUBE_API_KEY="AIzaXxx"
 export AIHOT_ENABLED="true"
 
@@ -163,7 +160,6 @@ python main.py
 ## 成本
 
 - **YouTube Data API**：扣免费 quota，不直接按请求扣钱；默认每日 10,000 quota，当前只对 RSS 成功发现的新视频查详情，两个 RSS 源都失败时才额外用 API 兜底
-- **360 DeepSeek API**：按 token 计费（默认摘要最多 3 次）
-- **Gemini API**：免费额度充足（排序 1 次/天）
+- **DeepSeek API**：按 token 计费（排序、摘要、AI HOT 筛选和偏好分析）
 - **飞书 API**：免费
 - **GitHub Actions**：公开仓库免费，私有仓库每月 2000 分钟免费额度

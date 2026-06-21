@@ -3,8 +3,10 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from preference_learning import default_state
+import update_preferences
 from update_preferences import (
     classify_events,
     parse_classification_response,
@@ -31,6 +33,28 @@ def sample_event(event_id="evt-1", reaction="like"):
 
 
 class PreferenceClassificationTests(unittest.TestCase):
+    def test_default_model_call_uses_openai_compatible_deepseek_api(self):
+        call_llm = getattr(update_preferences, "call_llm", None)
+        self.assertIsNotNone(call_llm, "update_preferences.call_llm should exist")
+
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "choices": [{"message": {"content": '{"events":[]}'}}]
+        }
+        with (
+            patch.object(update_preferences, "MINIMAX_API_KEY", "test-key"),
+            patch.object(update_preferences, "MINIMAX_API_BASE", "https://api.example.test"),
+            patch.object(update_preferences, "MINIMAX_MODEL", "deepseek-v4-flash"),
+            patch.object(update_preferences.requests, "post", return_value=response) as post,
+        ):
+            self.assertEqual(call_llm("prompt"), '{"events":[]}')
+
+        _, kwargs = post.call_args
+        self.assertEqual(post.call_args.args[0], "https://api.example.test/chat/completions")
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
+        self.assertEqual(kwargs["json"]["model"], "deepseek-v4-flash")
+
     def test_parses_fenced_json_and_ignores_unknown_events(self):
         raw = """```json
         {"events":[

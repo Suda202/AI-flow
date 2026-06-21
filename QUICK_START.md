@@ -54,8 +54,8 @@ export FEISHU_APP_ID="cli_xxxxx"
 export FEISHU_APP_SECRET="你的 App Secret"
 export FEISHU_USER_ID="ou_xxxxx"
 export MINIMAX_API_KEY="你的摘要 LLM API Key"
-export MINIMAX_API_BASE="https://api.360.cn/v1"
-export MINIMAX_MODEL="deepseek/deepseek-v4-flash"
+export MINIMAX_API_BASE="https://api.deepseek.com"
+export MINIMAX_MODEL="deepseek-v4-flash"
 export YOUTUBE_API_KEY="你的 YouTube API Key"
 
 python main.py
@@ -70,8 +70,8 @@ python main.py
    - `FEISHU_APP_SECRET`
    - `FEISHU_USER_ID`
    - `MINIMAX_API_KEY`
-   - `MINIMAX_API_BASE`（可选，默认 `https://api.360.cn/v1`）
-   - `MINIMAX_MODEL`（可选，默认 `deepseek/deepseek-v4-flash`）
+   - `MINIMAX_API_BASE`（可选，默认 `https://api.deepseek.com`）
+   - `MINIMAX_MODEL`（可选，默认 `deepseek-v4-flash`）
    - `YOUTUBE_API_KEY`
 
 ## 常见问题
