@@ -1,226 +1,296 @@
-"""
-Analyze Feishu feedback and turn it into ranking hints for main.py.
+"""Turn raw one-click feedback into incremental recommendation preferences."""
 
-The callback worker writes feedback.json on the data branch. CI restores it,
-runs this script, and saves updated profile.json + ranking_hints.txt back.
-"""
+from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
+
+from preference_learning import (
+    FACET_GROUPS,
+    apply_daily_feedback,
+    build_ranking_hints,
+    consolidate_weekly,
+    default_state,
+    normalize_feedback_events,
+    normalize_state,
+    should_run_weekly,
+    utc_iso,
+)
 
 
 FEEDBACK_FILE = os.environ.get("FEEDBACK_FILE", "feedback.json")
 PROFILE_FILE = os.environ.get("PROFILE_FILE", "profile.json")
+PREFERENCE_STATE_FILE = os.environ.get("PREFERENCE_STATE_FILE", "preference_state.json")
 RANKING_HINTS_FILE = os.environ.get("RANKING_HINTS_FILE", "ranking_hints.txt")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-CHANNEL_TOPICS = {
-    "a16z": ["vc投资", "创业", "商业模式"],
-    "sequoia": ["vc投资", "创业", "商业模式"],
-    "20vc": ["vc投资", "创业", "增长策略"],
-    "invest like the best": ["投资分析", "商业案例"],
-    "acquired": ["投资分析", "商业案例", "战略分析"],
-    "lenny": ["产品增长", "产品策略"],
-    "peter yang": ["ai产品", "产品策略"],
-    "hamel": ["ai产品", "llm应用", "开发者工具"],
-    "latent space": ["ai产品", "llm应用", "ai工程"],
-    "ai engineer": ["ai产品", "llm应用", "开发者工具"],
-    "figma": ["产品设计", "用户体验"],
-    "openai": ["openai", "llm", "ai产品"],
-    "anthropic": ["claude", "llm", "ai产品"],
-    "langchain": ["ai工程", "llm框架", "开发者工具"],
-    "llamaindex": ["ai工程", "rag", "开发者工具"],
-    "weaviate": ["ai工程", "向量数据库"],
-    "stanford": ["ai学术", "课程", "技术教程"],
-}
-
-TITLE_TOPIC_KEYWORDS = {
-    "ai产品": ["product", "pm", "ux", "user", "用户", "产品"],
-    "广告创意智能体": ["creative", "ads", "advertising", "marketing", "agent", "广告", "创意", "智能体"],
-    "增长/商业化": ["growth", "gtm", "go-to-market", "sales", "pricing", "商业化", "增长"],
-    "投资/金融内容": ["stock", "investing", "investment", "portfolio", "valuation", "fundraising", "ipo", "融资", "估值", "股票", "基金"],
-    "纯技术细节": ["implementation", "code", "api", "rag", "vector", "paper", "arxiv", "代码", "论文", "架构", "调参"],
-}
+MAX_FACETS_PER_GROUP = 4
+VALUE_TAGS = {"前沿趋势", "实用方法", "方法论", "商业价值", "深度洞察", "硅谷热点"}
+FORMAT_TAGS = {"实战教程", "入门教程", "深度分析", "案例拆解", "产品发布", "观点访谈"}
 
 
-def load_json(path: str) -> dict:
-    if not Path(path).exists():
+def load_json(path: str | Path, default: dict | None = None) -> dict:
+    path = Path(path)
+    if not path.exists():
+        return default.copy() if isinstance(default, dict) else {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return default.copy() if isinstance(default, dict) else {}
+    return data if isinstance(data, dict) else (default.copy() if isinstance(default, dict) else {})
+
+
+def save_json(path: str | Path, data: dict) -> None:
+    Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+
+
+def _clean_labels(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    labels = []
+    for item in value:
+        label = str(item).strip()
+        if label and label not in labels:
+            labels.append(label)
+    return labels[:MAX_FACETS_PER_GROUP]
+
+
+def parse_classification_response(raw: str | None, expected_event_ids: set[str]) -> dict[str, dict]:
+    """Parse a model response into validated facets keyed by feedback event id."""
+    if not raw:
         return {}
-    with open(path) as f:
-        return json.load(f)
+    text = str(raw).strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
 
+    rows = payload.get("events", []) if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return {}
 
-def save_json(path: str, data: dict):
-    with open(path, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def infer_topics(title: str, author: str) -> set[str]:
-    text = f"{title} {author}".lower()
-    topics = set()
-
-    for channel_pattern, channel_topics in CHANNEL_TOPICS.items():
-        if channel_pattern in text:
-            topics.update(channel_topics)
-
-    for topic, keywords in TITLE_TOPIC_KEYWORDS.items():
-        if any(keyword in text for keyword in keywords):
-            topics.add(topic)
-
-    return topics
-
-
-def get_topic_preferences(feedback: dict) -> tuple[dict, dict]:
-    topic_signals: dict[str, dict[str, float]] = {}
-    author_signals: dict[str, dict[str, float]] = {}
-
-    for data in feedback.values():
-        meta = data.get("video_meta", {})
-        title = meta.get("title") or ""
-        author = meta.get("author") or ""
-        author_key = author.strip()
-        reactions = data.get("reactions", [])[-3:]
-        if not reactions:
+    parsed = {}
+    for row in rows:
+        if not isinstance(row, dict):
             continue
-
-        topics = infer_topics(title, author)
-
-        for reaction_data in reactions:
-            reaction = reaction_data.get("reaction")
-            reason = reaction_data.get("reason")
-            reason_topics = set()
-
-            if reason == "too_investment":
-                reason_topics.add("投资/金融内容")
-            elif reason == "too_technical":
-                reason_topics.add("纯技术细节")
-            elif reason == "too_much_info":
-                reason_topics.add("信息过载/过长内容")
-            elif reason == "too_shallow":
-                reason_topics.add("浅内容/入门教程")
-            elif isinstance(reason, str) and reason.startswith("custom:"):
-                reason_topics.add(f"不喜欢: {reason[7:].strip()}")
-
-            scoped_topics = set(topics)
-            if reaction == "dislike" and reason == "too_investment":
-                scoped_topics = {topic for topic in topics if "投资" in topic or "金融" in topic or topic == "vc投资"}
-            elif reaction == "dislike" and reason == "too_technical":
-                scoped_topics = {topic for topic in topics if topic in {"纯技术细节", "ai工程", "llm框架", "开发者工具", "技术教程", "ai学术"}}
-
-            scoped_topics.update(reason_topics)
-
-            for topic in scoped_topics:
-                topic_signals.setdefault(topic, {"like": 0, "dislike": 0})
-                if reaction == "like":
-                    topic_signals[topic]["like"] += 1
-                elif reaction == "dislike":
-                    topic_signals[topic]["dislike"] += 1
-
-            if author_key:
-                author_signals.setdefault(author_key, {"like": 0, "dislike": 0})
-                if reaction == "like":
-                    author_signals[author_key]["like"] += 1
-                elif reaction == "dislike":
-                    author_signals[author_key]["dislike"] += 1
-
-    return topic_signals, author_signals
+        event_id = str(row.get("event_id") or "")
+        if event_id not in expected_event_ids:
+            continue
+        facets = {group: _clean_labels(row.get(group)) for group in FACET_GROUPS}
+        if any(facets.values()):
+            parsed[event_id] = facets
+    return parsed
 
 
-def update_profile(profile: dict, topic_signals: dict):
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    inferred = profile.setdefault("inferred_preferences", {
-        "topic_signals": {},
-        "last_updated": None,
-        "history": [],
-    })
+def deterministic_classify_event(event: dict) -> dict[str, list[str]]:
+    """Conservative fallback used when Gemini is unavailable or returns invalid JSON."""
+    title = str(event.get("title") or "")
+    creator = str(event.get("creator") or "")
+    category = str(event.get("category") or "")
+    tags = [str(tag).strip() for tag in event.get("selection_tags", []) if str(tag).strip()]
+    text = " ".join([title, creator, category, *tags]).lower()
 
-    existing = inferred.get("topic_signals", {})
-    for topic, signals in topic_signals.items():
-        previous = existing.get(topic, {"like": 0, "dislike": 0})
-        existing[topic] = {
-            "like": previous.get("like", 0) * 0.7 + signals.get("like", 0),
-            "dislike": previous.get("dislike", 0) * 0.7 + signals.get("dislike", 0),
+    topics = []
+    formats = []
+    values = []
+
+    for tag in tags:
+        if tag in VALUE_TAGS:
+            values.append(tag)
+        elif tag in FORMAT_TAGS:
+            formats.append(tag)
+        else:
+            topics.append(tag)
+
+    agent_terms = (
+        "agent", "agentic", "coding agent", "deep agents", "harness",
+        "智能体", "代理工程", "上下文工程",
+    )
+    if any(term in text for term in agent_terms):
+        topics.append("Agent")
+    if "loop engineering" in text or "循环工程" in text:
+        topics.append("Loop Engineering")
+    if any(term in text for term in ("agentic engineering", "coding agent", "harness", "代理工程")):
+        topics.append("Agentic Engineering")
+    if "deep agents" in text:
+        topics.append("Deep Agents")
+
+    tutorial_terms = ("tutorial", "guide", "how to", "hands-on", "实战", "教程", "指南")
+    generic_terms = ("getting started", "beginner", "install", "setup", "api 入门", "快速上手")
+    if any(term in text for term in tutorial_terms):
+        formats.append("入门教程" if any(term in text for term in generic_terms) else "实战教程")
+    if any(term in text for term in ("deep dive", "analysis", "拆解", "深度", "复盘")):
+        formats.append("深度分析")
+
+    if any(term in text for term in ("silicon valley", "硅谷", "a16z", "sequoia", "前沿", "趋势", "hot")):
+        values.extend(["前沿趋势", "硅谷热点"])
+    if any(term in text for term in ("practical", "hands-on", "实战", "方法", "workflow", "工程")):
+        values.append("实用方法")
+    if any(term in text for term in ("business", "revenue", "pricing", "商业", "营收", "定价")):
+        values.append("商业价值")
+
+    return {
+        "topics": _clean_labels(topics),
+        "formats": _clean_labels(formats),
+        "values": _clean_labels(values),
+        "sources": _clean_labels([creator] if creator else []),
+    }
+
+
+def _classification_prompt(events: list[dict]) -> str:
+    compact_events = [{
+        key: event.get(key)
+        for key in (
+            "event_id", "content_type", "title", "creator", "category",
+            "selection_tags", "reaction",
+        )
+    } for event in events]
+    return f"""你在为一个个人 AI 信息流分析一键反馈。请只识别内容本身的属性，不要把 dislike 解释成相反偏好。
+
+为每条事件提取四组简洁中文标签，每组最多 4 个：
+- topics：内容主题，例如 Agent、Loop Engineering、AI 产品、商业化
+- formats：内容形态，例如实战教程、入门教程、深度分析、案例拆解
+- values：用户可能获得的价值，例如前沿趋势、实用方法、商业价值、深度洞察
+- sources：作者、机构或媒体名称
+
+只返回 JSON，不要解释：
+{{"events":[{{"event_id":"...","topics":[],"formats":[],"values":[],"sources":[]}}]}}
+
+事件：
+{json.dumps(compact_events, ensure_ascii=False)}
+"""
+
+
+def call_gemini(prompt: str) -> str | None:
+    if not GEMINI_API_KEY:
+        return None
+    try:
+        from google import genai
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=prompt,
+        )
+        return response.text
+    except Exception as error:
+        print(f"  ⚠️ Gemini 偏好分类失败，使用本地兜底: {error}")
+        return None
+
+
+def classify_events(
+    events: list[dict],
+    model_call: Callable[[str], str | None] | None = None,
+) -> list[dict]:
+    if not events:
+        return []
+    model_call = model_call or call_gemini
+    expected_ids = {str(event.get("event_id") or "") for event in events}
+    try:
+        raw = model_call(_classification_prompt(events))
+    except Exception as error:
+        print(f"  ⚠️ 偏好分类调用异常，使用本地兜底: {error}")
+        raw = None
+    model_facets = parse_classification_response(raw, expected_ids)
+
+    classified = []
+    for event in events:
+        event_id = str(event.get("event_id") or "")
+        facets = model_facets.get(event_id) or deterministic_classify_event(event)
+        classified.append({**event, **facets})
+    return classified
+
+
+def _compact_facets(container: dict) -> dict:
+    compact = {}
+    for group in FACET_GROUPS:
+        records = container.get(group) if isinstance(container.get(group), dict) else {}
+        if not records:
+            continue
+        compact[group] = {
+            label: {
+                "net": record.get("net", 0),
+                "evidence_count": record.get("evidence_count", 0),
+            }
+            for label, record in records.items()
+            if isinstance(record, dict)
         }
-
-    inferred["topic_signals"] = existing
-    inferred["last_updated"] = now
-    inferred.setdefault("history", []).append({
-        "date": now,
-        "signals": topic_signals,
-    })
-    inferred["history"] = inferred["history"][-7:]
+    return compact
 
 
-def update_author_preferences(profile: dict, author_signals: dict):
-    inferred = profile.setdefault("inferred_preferences", {
-        "topic_signals": {},
-        "last_updated": None,
-        "history": [],
-    })
-    existing = inferred.get("author_signals", {})
-    for author, signals in author_signals.items():
-        previous = existing.get(author, {"like": 0, "dislike": 0})
-        existing[author] = {
-            "like": previous.get("like", 0) * 0.7 + signals.get("like", 0),
-            "dislike": previous.get("dislike", 0) * 0.7 + signals.get("dislike", 0),
-        }
-    inferred["author_signals"] = existing
+def sync_profile(profile: dict, state: dict, now: datetime) -> dict:
+    profile = dict(profile) if isinstance(profile, dict) else {}
+    profile["inferred_preferences"] = {
+        "schema_version": 2,
+        "last_updated": utc_iso(now),
+        "recent": _compact_facets(state.get("short_term", {})),
+        "stable": _compact_facets(state.get("long_term", {})),
+    }
+    return profile
 
 
-def build_ranking_hints(profile: dict) -> str:
-    signals = profile.get("inferred_preferences", {}).get("topic_signals", {})
-    author_signals = profile.get("inferred_preferences", {}).get("author_signals", {})
-    if not signals and not author_signals:
-        return ""
+def run_preference_update(
+    *,
+    feedback_path: str | Path = FEEDBACK_FILE,
+    profile_path: str | Path = PROFILE_FILE,
+    state_path: str | Path = PREFERENCE_STATE_FILE,
+    hints_path: str | Path = RANKING_HINTS_FILE,
+    now: datetime | None = None,
+    model_call: Callable[[str], str | None] | None = None,
+) -> dict:
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    feedback = load_json(feedback_path)
+    profile = load_json(profile_path)
+    state = normalize_state(load_json(state_path, default_state()))
 
-    hints = ["基于你的近期点击反馈，额外调整："]
-    for topic, data in sorted(signals.items(), key=lambda item: item[1].get("like", 0) - item[1].get("dislike", 0)):
-        delta = data.get("like", 0) - data.get("dislike", 0)
-        if delta <= -2:
-            hints.append(f"- 强烈回避: {topic}")
-        elif delta < 0:
-            hints.append(f"- 回避: {topic}")
-        elif delta >= 2:
-            hints.append(f"+ 强烈偏好: {topic}")
-        elif delta > 0:
-            hints.append(f"+ 偏好: {topic}")
+    all_events = normalize_feedback_events(feedback)
+    new_events = [
+        event for event in all_events
+        if event["event_id"] not in state["processed_events"]
+    ]
+    state = apply_daily_feedback(state, classify_events(new_events, model_call), now)
 
-    for author, data in sorted(author_signals.items(), key=lambda item: item[1].get("dislike", 0) - item[1].get("like", 0), reverse=True):
-        like = data.get("like", 0)
-        dislike = data.get("dislike", 0)
-        if dislike >= 4 and dislike - like >= 3:
-            hints.append(f"- 频道级回避: {author}（多次点踩后触发，除非标题明显命中强偏好主题，否则不要选）")
+    weekly_ran = False
+    if not state.get("last_weekly_run"):
+        state["last_weekly_run"] = utc_iso(now)
+    elif should_run_weekly(state, now):
+        state = consolidate_weekly(state, now)
+        weekly_ran = True
 
-    return "\n".join(hints) if len(hints) > 1 else ""
+    hints = build_ranking_hints(state)
+    profile = sync_profile(profile, state, now)
+    save_json(state_path, state)
+    save_json(profile_path, profile)
+    Path(hints_path).write_text(hints + ("\n" if hints else ""))
+    return {
+        "feedback_count": len(all_events),
+        "new_event_count": len(new_events),
+        "weekly_ran": weekly_ran,
+        "ranking_hints": hints,
+    }
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--local", action="store_true", help="use local files; kept for compatibility")
+    parser.add_argument("--local", action="store_true", help="保留兼容参数")
     parser.parse_args()
 
-    feedback = load_json(FEEDBACK_FILE)
-    if not feedback:
-        Path(RANKING_HINTS_FILE).write_text("")
-        print("📊 没有反馈数据，已清空 ranking_hints.txt")
-        return
-
-    profile = load_json(PROFILE_FILE)
-    topic_signals, author_signals = get_topic_preferences(feedback)
-    update_profile(profile, topic_signals)
-    update_author_preferences(profile, author_signals)
-    ranking_hints = build_ranking_hints(profile)
-
-    save_json(PROFILE_FILE, profile)
-    Path(RANKING_HINTS_FILE).write_text(ranking_hints)
-
-    print(f"📊 已分析 {len(feedback)} 条反馈")
-    if ranking_hints:
-        print(ranking_hints)
-    else:
-        print("暂无足够强的动态偏好信号")
+    result = run_preference_update()
+    print(
+        f"📊 共读取 {result['feedback_count']} 次反馈，"
+        f"本次处理 {result['new_event_count']} 次新反馈"
+    )
+    if result["weekly_ran"]:
+        print("🧭 已完成本周偏好归纳")
+    print(result["ranking_hints"] or "暂无足够强的动态偏好信号")
 
 
 if __name__ == "__main__":
