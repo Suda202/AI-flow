@@ -242,10 +242,28 @@ function looksLikeSummaryPromptLeak(summary) {
   return markerCount >= 2 || (text.includes("格式要求") && text.includes("视频标题"));
 }
 
+function looksLikeInternalReasoningLeak(summary) {
+  const text = String(summary || "").trim();
+  if (!text) return false;
+
+  const head = text.slice(0, 1000);
+  const structuredReasoning = /^\s*(?:```(?:json|python)?\s*)?[\{\[]/.test(head);
+  if (structuredReasoning && /['"](?:thinking|signature)['"]\s*:/.test(head)) return true;
+
+  return !head.includes("结论：") && [
+    "The user asks me",
+    "The task is to",
+    "We need answer",
+    "I need craft",
+  ].some((phrase) => head.includes(phrase));
+}
+
 function sanitizeSummary(summary) {
   const text = String(summary || "").trim();
   if (!text) return "";
-  if (looksLikeSummaryPromptLeak(text)) return SUMMARY_PROMPT_LEAK_FALLBACK;
+  if (looksLikeSummaryPromptLeak(text) || looksLikeInternalReasoningLeak(text)) {
+    return SUMMARY_PROMPT_LEAK_FALLBACK;
+  }
   return text;
 }
 
