@@ -1,5 +1,5 @@
 const DEFAULT_REPO_OWNER = "Suda202";
-const DEFAULT_REPO_NAME = "youtube-digest";
+const DEFAULT_REPO_NAME = "AI-flow";
 const DEFAULT_FEEDBACK_BRANCH = "data";
 const DEFAULT_FEEDBACK_FILE = "feedback.json";
 const SUMMARY_PROMPT_LEAK_FALLBACK = "⚠️ 摘要生成异常，已隐藏提示词内容。请直接打开视频判断。";
@@ -90,7 +90,7 @@ async function readGithubFile(env) {
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${env.GH_TOKEN}`,
-      "User-Agent": "youtube-digest-feedback-vercel",
+      "User-Agent": "ai-flow-feedback-vercel",
     },
   });
 
@@ -112,7 +112,7 @@ async function writeGithubFile(env, sha, data) {
   const config = githubConfig(env);
   const url = `https://api.github.com/repos/${config.owner}/${config.repo}/contents/${config.file}`;
   const body = {
-    message: "chore: update youtube feedback",
+    message: "chore: update AI Flow feedback",
     branch: config.branch,
     content: encodeBase64(JSON.stringify(data, null, 2)),
   };
@@ -123,7 +123,7 @@ async function writeGithubFile(env, sha, data) {
     headers: {
       Authorization: `Bearer ${env.GH_TOKEN}`,
       "Content-Type": "application/json",
-      "User-Agent": "youtube-digest-feedback-vercel",
+      "User-Agent": "ai-flow-feedback-vercel",
     },
     body: JSON.stringify(body),
   });
@@ -341,7 +341,7 @@ function buildUpdatedCard(cardState, feedbackState) {
   return {
     config: { wide_screen_mode: true },
     header: {
-      title: { tag: "plain_text", content: `📹 YouTube 今日推荐 (${safeCardState.date || new Date().toISOString().slice(0, 10)})` },
+      title: { tag: "plain_text", content: `🧭 AI Flow 今日精选 (${safeCardState.date || new Date().toISOString().slice(0, 10)})` },
       template: "blue",
     },
     elements,

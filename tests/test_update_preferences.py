@@ -99,6 +99,22 @@ class PreferenceClassificationTests(unittest.TestCase):
         self.assertEqual(classified[0]["reaction"], "like")
         self.assertEqual(classified[0]["topics"], ["Agentic Engineering"])
 
+    def test_fallback_learns_content_format_without_conflating_it_with_topic(self):
+        event = {
+            **sample_event(),
+            "content_type": "follow_builders_podcast",
+            "title": "A conversation with an AI product founder",
+            "creator": "Training Data",
+            "category": "builder-podcast",
+            "selection_tags": [],
+        }
+
+        classified = classify_events([event], model_call=lambda _prompt: None)
+
+        self.assertIn("播客访谈", classified[0]["formats"])
+        self.assertIn("一手观点", classified[0]["values"])
+        self.assertNotIn("播客访谈", classified[0]["topics"])
+
 
 class PreferenceUpdateIntegrationTests(unittest.TestCase):
     def test_update_processes_only_new_events_and_persists_state(self):
