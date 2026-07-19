@@ -42,6 +42,37 @@ class AihotIntegrationTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in selected], ["agent-workflow"])
         call_llm.assert_called_once()
 
+    def test_external_selection_ids_are_namespaced(self):
+        items = [
+            {
+                "id": "same-id",
+                "title": "AI agent workflow from a builder",
+                "summary": "Agentic engineering practice.",
+                "source": "Builder",
+                "url": "https://example.com/builder",
+                "content_type": "follow_builders",
+                "score": 90,
+            },
+            {
+                "id": "same-id",
+                "title": "AI agent workflow from RSS",
+                "summary": "Agentic engineering practice.",
+                "source": "RSS",
+                "url": "https://example.com/rss",
+                "content_type": "qmreader",
+                "score": 89,
+            },
+        ]
+
+        with mock.patch.object(main, "DEEPSEEK_API_KEY", "configured"), mock.patch.object(
+            main,
+            "call_llm",
+            return_value='{"selected_ids":["qmreader:same-id"]}',
+        ):
+            selected = main.select_aihot_items_for_profile(items, take=1)
+
+        self.assertEqual(selected[0]["content_type"], "qmreader")
+
     def test_fetch_aihot_items_uses_selected_window_and_skill_user_agent(self):
         fetch_aihot_items = getattr(main, "fetch_aihot_items", None)
         if fetch_aihot_items is None:
@@ -234,7 +265,7 @@ class AihotIntegrationTests(unittest.TestCase):
             enable_feedback=True,
         )
 
-        self.assertIn("AI HOT", card["header"]["title"]["content"])
+        self.assertIn("AI Flow", card["header"]["title"]["content"])
         markdown_blocks = [
             element.get("content", "")
             for element in card["elements"]
@@ -284,6 +315,28 @@ class AihotIntegrationTests(unittest.TestCase):
             element["content"] for element in elements if element["tag"] == "markdown"
         )
         self.assertNotIn("AI HOT 精选", markdown_text)
+
+    def test_external_information_feedback_keeps_source_type(self):
+        elements = main.build_aihot_card_elements([{
+            "id": "entry-1",
+            "title": "一种新的 Agent 工作流",
+            "summary": "来自公开 RSS 元数据的摘要。",
+            "url": "https://example.com/agent-workflow",
+            "source": "QMReader · simonwillison",
+            "creator": "simonwillison",
+            "content_type": "qmreader",
+        }], enable_feedback=True)
+
+        feedback_values = [
+            action["value"]
+            for element in elements
+            if element.get("tag") == "action"
+            for action in element["actions"]
+            if action.get("value")
+        ]
+        self.assertEqual(feedback_values[0]["content_type"], "qmreader")
+        self.assertEqual(feedback_values[0]["content_id"], "qmreader:entry-1")
+        self.assertEqual(feedback_values[0]["creator"], "simonwillison")
 
     def test_aihot_summary_is_split_into_readable_paragraphs(self):
         elements = main.build_aihot_card_elements([{
