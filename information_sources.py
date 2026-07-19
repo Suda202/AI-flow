@@ -19,6 +19,9 @@ FOLLOW_BUILDERS_X_URL = (
 FOLLOW_BUILDERS_BLOGS_URL = (
     "https://raw.githubusercontent.com/zarazhangrui/follow-builders/main/feed-blogs.json"
 )
+FOLLOW_BUILDERS_PODCASTS_URL = (
+    "https://raw.githubusercontent.com/zarazhangrui/follow-builders/main/feed-podcasts.json"
+)
 AI_NEWS_RADAR_URL = (
     "https://raw.githubusercontent.com/LearnPrompt/ai-news-radar/master/data/daily-brief.json"
 )
@@ -125,6 +128,28 @@ def canonicalize_url(raw_url: object) -> str:
     return urlunsplit((scheme, host, path, urlencode(sorted(query)), ""))
 
 
+def youtube_video_id_from_url(raw_url: object) -> str:
+    """Extract a concrete YouTube video ID for video/podcast cross-source deduplication."""
+    raw = str(raw_url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return ""
+    host = (parsed.hostname or "").lower()
+    candidate = ""
+    if host in {"youtu.be", "www.youtu.be"}:
+        candidate = parsed.path.strip("/").split("/", 1)[0]
+    elif host in {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com"}:
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if parsed.path.rstrip("/") == "/watch":
+            candidate = dict(parse_qsl(parsed.query, keep_blank_values=True)).get("v", "")
+        elif len(path_parts) >= 2 and path_parts[0] in {"embed", "live", "shorts"}:
+            candidate = path_parts[1]
+    return candidate if re.fullmatch(r"[A-Za-z0-9_-]{6,}", candidate or "") else ""
+
+
 def information_history_key(item: dict) -> str:
     basis = canonicalize_url(item.get("url"))
     if not basis:
@@ -136,15 +161,17 @@ def information_history_key(item: dict) -> str:
 def parse_follow_builders_payloads(
     x_payload: dict | None,
     blogs_payload: dict | None,
+    podcasts_payload: dict | None = None,
     *,
     now: datetime | None = None,
     hours: int = 24,
 ) -> list[dict]:
-    """Normalize Follow Builders X and blog feeds; podcasts are intentionally ignored."""
+    """Normalize Follow Builders X, first-party blogs, and transcript-backed podcasts."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     items: list[dict] = []
     x_payload = x_payload if isinstance(x_payload, dict) else {}
     blogs_payload = blogs_payload if isinstance(blogs_payload, dict) else {}
+    podcasts_payload = podcasts_payload if isinstance(podcasts_payload, dict) else {}
 
     for builder in x_payload.get("x", []):
         if not isinstance(builder, dict):
@@ -196,6 +223,37 @@ def parse_follow_builders_payloads(
             "category": "builder-blog",
             "content_type": "follow_builders",
             "score": 74,
+        })
+
+    podcast_hours = max(hours, 14 * 24)
+    for podcast in podcasts_payload.get("podcasts", []):
+        if not isinstance(podcast, dict):
+            continue
+        title = _clean_text(podcast.get("title"))
+        url = _clean_text(podcast.get("url"))
+        published = podcast.get("publishedAt") or podcasts_payload.get("generatedAt")
+        transcript = str(podcast.get("transcript") or "").strip()
+        if (
+            not title
+            or not url
+            or len(transcript) < 100
+            or not _is_recent(published, now=now, hours=podcast_hours)
+        ):
+            continue
+        source = _clean_text(podcast.get("name")) or "Follow Builders Podcast"
+        items.append({
+            "id": _clean_text(podcast.get("guid")) or information_history_key({"url": url}),
+            "title": title,
+            "summary": _title_from_text(transcript, limit=1800),
+            "url": url,
+            "source": source,
+            "creator": source,
+            "publishedAt": _iso_z(_parse_datetime(published)),
+            "category": "builder-podcast",
+            "content_type": "follow_builders_podcast",
+            "score": 84,
+            "transcript": transcript,
+            "youtube_video_id": youtube_video_id_from_url(url),
         })
     return items
 
@@ -303,6 +361,7 @@ def _dedupe_priority(item: dict) -> tuple[float, float, int, int]:
     score = _safe_float(item.get("score"))
     summary_length = len(_clean_text(item.get("summary")))
     source_priority = {
+        "follow_builders_podcast": 5,
         "ai_news_radar": 4,
         "aihot": 3,
         "follow_builders": 2,
@@ -365,9 +424,11 @@ def fetch_follow_builders_items(
     now: datetime | None = None,
     x_url: str = FOLLOW_BUILDERS_X_URL,
     blogs_url: str = FOLLOW_BUILDERS_BLOGS_URL,
+    podcasts_url: str = FOLLOW_BUILDERS_PODCASTS_URL,
 ) -> list[dict]:
     x_payload: dict = {}
     blogs_payload: dict = {}
+    podcasts_payload: dict = {}
     errors = []
     try:
         x_payload = _get_json(x_url, get=get)
@@ -377,9 +438,19 @@ def fetch_follow_builders_items(
         blogs_payload = _get_json(blogs_url, get=get)
     except Exception as error:
         errors.append(f"blogs: {error}")
-    if errors and not x_payload and not blogs_payload:
+    try:
+        podcasts_payload = _get_json(podcasts_url, get=get)
+    except Exception as error:
+        errors.append(f"podcasts: {error}")
+    if errors and not x_payload and not blogs_payload and not podcasts_payload:
         raise RuntimeError("; ".join(errors))
-    return parse_follow_builders_payloads(x_payload, blogs_payload, now=now, hours=hours)
+    return parse_follow_builders_payloads(
+        x_payload,
+        blogs_payload,
+        podcasts_payload,
+        now=now,
+        hours=hours,
+    )
 
 
 def fetch_ai_news_radar_items(

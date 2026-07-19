@@ -6,7 +6,7 @@ AI Flow consumes public outputs from the projects below. Their repositories are 
 
 - Project: <https://github.com/zarazhangrui/follow-builders>
 - License declared by the upstream README: MIT
-- Usage here: public `feed-x.json` and `feed-blogs.json` only. Podcast feeds are intentionally excluded because the existing YouTube subscriptions already cover most of them.
+- Usage here: public `feed-x.json`, `feed-blogs.json`, and transcript-backed `feed-podcasts.json`. Podcast episodes are deduplicated against YouTube by concrete video URL, so overlapping channels do not create duplicate cards while unique or missed episodes can supplement the digest.
 
 ## QMReader
 

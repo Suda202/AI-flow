@@ -14,25 +14,25 @@
 ```
 YouTube RSS ───────────────┐
 AI HOT ────────────────────┤
-Follow Builders（X/博客）──┤→ 字段归一化 → URL 去重 → 偏好筛选 → 中文摘要 → 飞书卡片 → 反馈学习
+Follow Builders（X/博客/播客）┤→ 字段归一化 → URL 去重 → 偏好筛选 → 中文摘要 → 飞书卡片 → 反馈学习
 AI News Radar（事件）──────┤
 QMReader（RSS 元数据）─────┘
 ```
 
 ### 多源信息收集
 
-- **Follow Builders**：读取公开的 `feed-x.json` 和 `feed-blogs.json`，不重复接入已被 YouTube 频道覆盖的播客。
+- **Follow Builders**：读取公开的 X、博客和带逐字稿播客 Feed。播客不再按频道排除，而是按具体 YouTube 节目 URL 去重；已有视频合并，订阅漏抓或独有节目作为补充。播客采用 14 天窗口，其他动态采用 `LOOKBACK_HOURS`。
 - **AI News Radar**：读取公开的事件级 `daily-brief.json`，保留多源确认信号，不复制其抓取器和付费源。
 - **QMReader**：读取公开 `/api/entries` 的原始标题、中文标题、摘要、URL 和发布时间，不使用第三方风格改写正文。
 - **AI HOT**：继续作为个性化 AI 动态来源。
-- 任一来源失败只记日志，不阻塞其他来源或 YouTube；所有来源按 canonical URL 统一去重并写入 `history.json`。
+- 任一来源失败只记日志，不阻塞其他来源或 YouTube；所有来源按 canonical URL 统一去重。只有实际推送的内容才写入 `history.json`，未入选候选之后仍可凭更高相关性或更多来源确认重新竞争。
 
 ### 阶段一：收集候选视频
 
 1. 遍历 `channels.json` 中的订阅频道，**并发拉取** YouTube RSS（10 线程），获取最近 24h 内发布的视频；`channel_id` RSS 失败时，会先重试并改用同频道 uploads playlist RSS，两个 RSS 都失败才用 YouTube Data API 兜底
 2. RSS 天然不包含 Shorts，再通过 YouTube Data API 过滤掉时长 < 3 分钟的短视频（带 quota 保护，接近上限自动停止）
 3. 同时获取每个视频的 description 和播放量，作为后续排序和摘要的输入
-4. 通过 `history.json` 去重，避免重复推送
+4. 通过 `history.json` 去重已推送内容；同一节目来自播客 Feed 和 YouTube 时按视频 ID 合并
 
 ### 阶段二：预过滤 + DeepSeek 智能排序（核心）
 
@@ -62,12 +62,13 @@ QMReader（RSS 元数据）─────┘
 
 1. 对 Top N 视频，优先用 yt-dlp 获取字幕生成摘要（内容最完整），字幕不可用时 fallback 到 description
 2. DeepSeek v4 Flash 生成短摘要：结论 + 最多 3 个要点 + 适合场景，默认控制在 350 中文字符以内
-3. 视频与多源信息合并为一张 “AI Flow 今日精选” 卡片，优先通过飞书应用机器人推送
+3. 视频与多源信息合并为一张 “AI Flow 今日精选” 卡片，最多 7 条；深度视频最多 3 条，其余位置由博客、播客、事件、RSS 与 Builder 动态竞争
 4. 所有内容都提供 👍/👎 一键反馈；回调先返回成功提示，再异步写入 `feedback.json`
    - 每天只分析新增点击，提取主题、内容形态、价值和来源四类弱信号，避免旧反馈被重复累计
    - 单次点击只进入短期偏好；每满 7 天自动归纳一次，至少 2 条不同内容形成同向证据才会升级为稳定偏好
    - 点踩“入门教程”只降低这种内容形态，不会连带惩罚 Agent 等上层主题
-5. 多源候选经过同一质量门槛和个性化筛选后默认最多选 3 条，也允许 0 条；优先 Agent / Loop Engineering、硅谷前沿趋势和有产品或商业价值的内容
+5. 多源候选先做来源价值校准，再叠加用户相关性，最后约束多样性：一手深度访谈/播客与官方博客 > 多来源确认事件 > 高质量聚合 > RSS 发现 > 单条社媒信号；同一来源角色最多 2 条、同一作者最多 1 条、探索内容最多 1 条
+   - 来源只影响可信度和信息深度，不能替代内容判断；低质量内容不会为了凑来源多样性入选
    - 信息卡片只显示标题、分段摘要和原文链接；来源、分数和分类仅用于筛选与反馈学习
 6. 如果所有来源都没有符合条件的内容，默认只写日志；需要状态卡时可开启 `FEISHU_SEND_STATUS_CARD`
 7. 每条视频包含：频道名、时长、播放量、推荐理由、摘要、原视频链接
@@ -77,7 +78,7 @@ QMReader（RSS 元数据）─────┘
 | 组件 | 技术 | 说明 |
 |------|------|------|
 | 视频源 | YouTube RSS + Data API v3 | RSS 并发轮询 + API 补充详情 |
-| AI 动态 | AI HOT Public API + Follow Builders | 聚合精选动态、Builder X 和官方博客，无需新增 API Key |
+| AI 动态 | AI HOT Public API + Follow Builders | 聚合精选动态、Builder X、官方博客和逐字稿播客，无需新增 API Key |
 | 广域雷达 | AI News Radar public JSON | 消费已去重的事件级公开产物 |
 | RSS 阅读 | QMReader public API | 读取公开文章元数据，不使用第三方改写正文 |
 | 字幕 | yt-dlp | 获取视频字幕用于摘要生成 |
@@ -123,16 +124,18 @@ QMReader（RSS 元数据）─────┘
 | `FEISHU_SEND_STATUS_CARD` | 否 | `false` | 无候选/无推荐时是否推送状态卡；默认关闭，避免重复触发时多一条消息 |
 | `YT_COOKIES_FILE` | 否 | - | YouTube cookies 文件路径（yt-dlp 字幕获取用，避免 bot 检测） |
 | `MIN_DURATION_MINUTES` | 否 | `3` | 最短视频时长（分钟），过滤 Shorts |
-| `TOP_N` | 否 | `3` | 每日推送视频数量 |
+| `DAILY_ITEM_LIMIT` | 否 | `7` | 每张日报的内容硬上限；即使配置更大也不会超过 7 |
+| `DAILY_VIDEO_LIMIT` | 否 | `3` | 日报中的深度 YouTube 视频上限，最大 3 |
+| `TOP_N` | 否 | `3` | 兼容视频筛选配置，同时受 `DAILY_VIDEO_LIMIT` 约束 |
 | `LOOKBACK_HOURS` | 否 | `24` | 回溯时间窗口（小时） |
 | `AIHOT_ENABLED` | 否 | `true` | 是否合并 AI HOT 精选资讯 |
-| `AIHOT_TAKE` | 否 | `3` | 兼容旧配置；未设置 `INFORMATION_TAKE` 时作为多源信息上限 |
+| `AIHOT_TAKE` | 否 | `3` | 兼容旧的 AI HOT 单源调用配置 |
 | `AIHOT_CANDIDATE_TAKE` | 否 | `30` | 兼容旧配置；参与计算默认多源候选池大小 |
 | `AIHOT_MIN_SCORE` | 否 | `0` | AI HOT 最低分数门槛；默认不过滤 |
 | `AIHOT_API_BASE` | 否 | `https://aihot.virxact.com` | AI HOT API Base，一般不用改 |
-| `INFORMATION_TAKE` | 否 | `3` | 每日多源信息最多入选条数，允许为 0 |
+| `INFORMATION_TAKE` | 否 | `7` | 多源信息预选上限，允许为 0；最终仍与视频共用 7 条总预算 |
 | `INFORMATION_CANDIDATE_TAKE` | 否 | `40` | 每个公开源的候选池上限，最大 100 |
-| `FOLLOW_BUILDERS_ENABLED` | 否 | `true` | 是否读取 Follow Builders 的 X 与博客公开 feed |
+| `FOLLOW_BUILDERS_ENABLED` | 否 | `true` | 是否读取 Follow Builders 的 X、博客与播客公开 Feed |
 | `AI_NEWS_RADAR_ENABLED` | 否 | `true` | 是否读取 AI News Radar 的事件级日报 JSON |
 | `QMREADER_ENABLED` | 否 | `true` | 是否读取 QMReader 的公开文章元数据 |
 | `HISTORY_MAX_DAYS` | 否 | `30` | 历史记录保留天数（自动清理） |

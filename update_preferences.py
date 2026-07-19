@@ -96,6 +96,7 @@ def parse_classification_response(raw: str | None, expected_event_ids: set[str])
 def deterministic_classify_event(event: dict) -> dict[str, list[str]]:
     """Conservative fallback used when the model is unavailable or returns invalid JSON."""
     title = str(event.get("title") or "")
+    content_type = str(event.get("content_type") or "")
     creator = str(event.get("creator") or "")
     category = str(event.get("category") or "")
     tags = [str(tag).strip() for tag in event.get("selection_tags", []) if str(tag).strip()]
@@ -104,6 +105,20 @@ def deterministic_classify_event(event: dict) -> dict[str, list[str]]:
     topics = []
     formats = []
     values = []
+
+    if content_type == "follow_builders_podcast" or category == "builder-podcast":
+        formats.append("播客访谈")
+        values.append("一手观点")
+    elif content_type == "follow_builders" and category == "builder-blog":
+        formats.append("官方博客")
+        values.append("一手信息")
+    elif content_type == "follow_builders":
+        formats.append("Builder 短观点")
+    elif content_type == "ai_news_radar":
+        formats.append("多源事件")
+        values.append("多源确认")
+    elif content_type == "qmreader":
+        formats.append("文章")
 
     for tag in tags:
         if tag in VALUE_TAGS:
@@ -160,8 +175,8 @@ def _classification_prompt(events: list[dict]) -> str:
 
 为每条事件提取四组简洁中文标签，每组最多 4 个：
 - topics：内容主题，例如 Agent、Loop Engineering、AI 产品、商业化
-- formats：内容形态，例如实战教程、入门教程、深度分析、案例拆解
-- values：用户可能获得的价值，例如前沿趋势、实用方法、商业价值、深度洞察
+- formats：内容形态，例如播客访谈、官方博客、Builder 短观点、多源事件、文章、实战教程、深度分析
+- values：用户可能获得的价值，例如一手观点、多源确认、前沿趋势、实用方法、商业价值、深度洞察
 - sources：作者、机构或媒体名称
 
 只返回 JSON，不要解释：

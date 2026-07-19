@@ -1,4 +1,5 @@
 import inspect
+import math
 import unittest
 from unittest import mock
 
@@ -18,6 +19,21 @@ class FakeResponse:
 
 
 class AihotIntegrationTests(unittest.TestCase):
+    @staticmethod
+    def video_item(index):
+        return {
+            "video": {
+                "video_id": f"video-{index}",
+                "title": f"Video {index}",
+                "author": f"Channel {index}",
+                "url": f"https://youtube.com/watch?v=video-{index}",
+                "duration_str": "20:00",
+                "view_count": 1000,
+                "reason": "值得深入看",
+            },
+            "summary": "结论：有价值。",
+        }
+
     def test_aihot_model_selection_uses_configured_summary_llm(self):
         items = [{
             "id": "agent-workflow",
@@ -435,6 +451,57 @@ class AihotIntegrationTests(unittest.TestCase):
                 "score": 88,
                 "url": "https://example.com/promo",
             },
+            {
+                "id": "weekly-roundup",
+                "title": "AI 智能体周刊：本周 20 条 Agent 新闻汇总",
+                "summary": "聚合多个二手消息和链接。",
+                "source": "RSS Weekly",
+                "category": "industry",
+                "content_type": "qmreader",
+                "score": 98,
+                "url": "https://example.com/weekly",
+            },
+            {
+                "id": "setup-guide",
+                "title": "设置备用 Mac 以便 Claude Code 控制：分步指南",
+                "summary": "安装并配置远程环境。",
+                "source": "AI News Radar",
+                "category": "radar-story",
+                "content_type": "ai_news_radar",
+                "score": 90,
+                "url": "https://example.com/setup",
+            },
+            {
+                "id": "runtime-detail",
+                "title": "Claude Code 现在使用 Rust 编写的 Bun",
+                "summary": "讨论运行时重写和依赖实现。",
+                "source": "RSS",
+                "category": "rss-reading",
+                "content_type": "qmreader",
+                "score": 90,
+                "url": "https://example.com/runtime",
+            },
+            {
+                "id": "unrelated-property",
+                "title": "NYC 要求房东和房产中介披露房源中的 AI 使用",
+                "summary": "租房者讨论公寓面积和房源广告误差。",
+                "source": "AI News Radar",
+                "category": "multi_source",
+                "content_type": "ai_news_radar",
+                "score": 90,
+                "source_count": 5,
+                "url": "https://example.com/property",
+            },
+            {
+                "id": "social-stats-only",
+                "title": "Kimi K3 时刻",
+                "summary": "Hacker News：403 points / 432 comments。作者回复称这并不明显。",
+                "source": "QMReader · hackernews",
+                "category": "rss-reading",
+                "content_type": "qmreader",
+                "score": 88,
+                "url": "https://example.com/social-stats",
+            },
         ]
 
         selected = main.select_aihot_items_for_profile(
@@ -446,6 +513,180 @@ class AihotIntegrationTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in selected], ["loop", "deep-agents"])
         self.assertIn("Loop Engineering", selected[0]["match_tags"])
         self.assertIn("Agent", selected[1]["match_tags"])
+
+    def test_calibrated_score_prefers_first_party_depth_and_confirmed_events(self):
+        podcast = {
+            "content_type": "follow_builders_podcast",
+            "category": "builder-podcast",
+            "score": 70,
+            "summary": "A deep original conversation about AI product strategy.",
+        }
+        radar = {
+            "content_type": "ai_news_radar",
+            "score": 70,
+            "source_count": 4,
+            "summary": "Four sources confirm an AI agent product change.",
+        }
+        x_post = {
+            "content_type": "follow_builders",
+            "category": "builder-x",
+            "score": 95,
+            "summary": "A short AI post.",
+        }
+
+        self.assertGreater(main.calibrated_information_score(podcast), main.calibrated_information_score(x_post))
+        self.assertGreater(main.calibrated_information_score(radar), main.calibrated_information_score(x_post))
+        self.assertTrue(math.isfinite(main.calibrated_information_score({"score": "NaN"})))
+
+    def test_information_mix_limits_source_creator_and_exploration_concentration(self):
+        items = [
+            {"id": "x1", "content_type": "follow_builders", "category": "builder-x", "creator": "A", "selection_lane": "builder"},
+            {"id": "x2", "content_type": "follow_builders", "category": "builder-x", "creator": "A", "selection_lane": "builder"},
+            {"id": "x3", "content_type": "follow_builders", "category": "builder-x", "creator": "B", "selection_lane": "builder"},
+            {"id": "x4", "content_type": "follow_builders", "category": "builder-x", "creator": "C", "selection_lane": "builder"},
+            {"id": "r1", "content_type": "ai_news_radar", "creator": "Radar 1", "selection_lane": "radar"},
+            {"id": "r2", "content_type": "ai_news_radar", "creator": "Radar 2", "selection_lane": "radar"},
+            {"id": "e1", "content_type": "aihot", "creator": "Explore 1", "selection_lane": "exploration"},
+            {"id": "e2", "content_type": "qmreader", "creator": "Explore 2", "selection_lane": "exploration"},
+        ]
+
+        selected = main.diversify_information_items(items, limit=7)
+        families = [main.information_source_family(item) for item in selected]
+        creators = [item["creator"] for item in selected]
+
+        self.assertLessEqual(families.count("builder_x"), 2)
+        self.assertEqual(creators.count("A"), 1)
+        self.assertLessEqual(sum(item["selection_lane"] == "exploration" for item in selected), 1)
+
+    def test_information_mix_collapses_near_duplicate_event_titles_across_urls(self):
+        items = [
+            {
+                "id": "radar",
+                "title": "AI 热潮正在瓦解全球决策机制",
+                "content_type": "ai_news_radar",
+                "creator": "Radar",
+                "selection_lane": "radar",
+            },
+            {
+                "id": "rss",
+                "title": "AI狂热正在摧毁全球决策",
+                "content_type": "qmreader",
+                "creator": "Simon Willison",
+                "selection_lane": "reading",
+            },
+            {
+                "id": "podcast",
+                "title": "AI 产品团队如何评估智能体",
+                "content_type": "follow_builders_podcast",
+                "creator": "Training Data",
+                "selection_lane": "podcast",
+            },
+        ]
+
+        selected = main.diversify_information_items(items, limit=7)
+
+        self.assertEqual([item["id"] for item in selected], ["radar", "podcast"])
+
+    def test_daily_digest_hard_cap_keeps_at_most_three_videos_and_seven_total(self):
+        videos = [self.video_item(index) for index in range(5)]
+        information = [
+            {"id": f"info-{index}", "title": f"Info {index}", "url": f"https://example.com/{index}"}
+            for index in range(6)
+        ]
+
+        fitted_videos, fitted_information = main.fit_daily_digest(videos, information, limit=7)
+
+        self.assertEqual(len(fitted_videos), 3)
+        self.assertEqual(len(fitted_information), 4)
+        self.assertLessEqual(len(fitted_videos) + len(fitted_information), 7)
+
+    def test_send_combined_digest_enforces_limit_even_for_direct_callers(self):
+        videos = [self.video_item(index) for index in range(5)]
+        information = [
+            {"id": f"info-{index}", "title": f"Info {index}", "url": f"https://example.com/{index}"}
+            for index in range(6)
+        ]
+
+        with mock.patch.object(main, "send_card_to_feishu", return_value=True) as send:
+            main.send_combined_digest(videos, information)
+
+        card = send.call_args.args[0]
+        action_rows = [element for element in card["elements"] if element.get("tag") == "action"]
+        self.assertEqual(len(action_rows), 7)
+
+    def test_podcast_youtube_url_is_seen_when_video_was_already_delivered(self):
+        item = {
+            "id": "podcast-1",
+            "content_type": "follow_builders_podcast",
+            "url": "https://www.youtube.com/watch?v=already123",
+        }
+
+        self.assertTrue(main.information_item_seen(item, {"already123": "2026-07-19T00:00:00Z"}))
+
+    def test_daily_digest_drops_podcast_when_same_video_is_selected_today(self):
+        video = self.video_item("same")
+        video["video"]["video_id"] = "already123"
+        podcast = {
+            "id": "podcast-1",
+            "content_type": "follow_builders_podcast",
+            "url": "https://www.youtube.com/watch?v=already123",
+        }
+
+        _, information = main.fit_daily_digest([video], [podcast], limit=7)
+
+        self.assertEqual(information, [])
+
+    def test_only_delivered_information_is_written_to_history(self):
+        delivered = {"id": "sent", "url": "https://example.com/sent"}
+        unselected = {"id": "later", "url": "https://example.com/later"}
+        history = {}
+
+        main.mark_information_items_delivered(history, [delivered], "2026-07-19T00:00:00Z")
+
+        self.assertIn(main.information_history_key(delivered), history)
+        self.assertNotIn(main.information_history_key(unselected), history)
+
+    def test_selected_podcast_summary_uses_transcript_beyond_feed_preview(self):
+        podcast = {
+            "id": "episode-1",
+            "title": "An interview about agent evaluation",
+            "summary": "Short feed preview.",
+            "url": "https://example.com/episode",
+            "source": "Training Data",
+            "content_type": "follow_builders_podcast",
+            "transcript": "Opening remarks. " * 200 + "LATE_UNIQUE_INSIGHT about eval design.",
+        }
+
+        with mock.patch.object(main, "DEEPSEEK_API_KEY", "configured"), mock.patch.object(
+            main,
+            "call_llm",
+            return_value='{"items":[{"id":"follow_builders_podcast:episode-1","title":"智能体评估访谈","summary":"提炼完整逐字稿中的评估设计。"}]}',
+        ) as call_llm:
+            localized = main.localize_information_items([podcast])
+
+        self.assertIn("LATE_UNIQUE_INSIGHT", call_llm.call_args.args[0])
+        self.assertEqual(localized[0]["title"], "智能体评估访谈")
+
+    def test_main_marks_only_successfully_delivered_information(self):
+        delivered = {"id": "sent", "title": "Sent", "url": "https://example.com/sent"}
+        unselected = {"id": "later", "title": "Later", "url": "https://example.com/later"}
+        history = {}
+
+        with (
+            mock.patch.object(main, "load_profile", return_value={}),
+            mock.patch.object(main, "get_digest_top_n", return_value=3),
+            mock.patch.object(main, "load_history", return_value=history),
+            mock.patch.object(main, "load_ranking_hints", return_value=""),
+            mock.patch.object(main, "collect_information_items", return_value=([delivered], [delivered, unselected])),
+            mock.patch.object(main, "load_channels", return_value=[]),
+            mock.patch.object(main, "send_combined_digest", return_value=True),
+            mock.patch.object(main, "save_history") as save_history,
+        ):
+            main.main()
+
+        saved = save_history.call_args.args[0]
+        self.assertIn(main.information_history_key(delivered), saved)
+        self.assertNotIn(main.information_history_key(unselected), saved)
 
 
 if __name__ == "__main__":

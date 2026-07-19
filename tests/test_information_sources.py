@@ -9,6 +9,7 @@ from information_sources import (
     parse_ai_news_radar_payload,
     parse_follow_builders_payloads,
     parse_qmreader_payload,
+    youtube_video_id_from_url,
 )
 
 
@@ -16,7 +17,7 @@ NOW = datetime(2026, 7, 19, 8, 0, tzinfo=timezone.utc)
 
 
 class InformationSourceTests(unittest.TestCase):
-    def test_follow_builders_uses_x_and_blogs_but_not_podcasts(self):
+    def test_follow_builders_uses_x_blogs_and_unique_podcast_content(self):
         x_payload = {
             "generatedAt": "2026-07-19T07:00:00Z",
             "x": [{
@@ -33,7 +34,6 @@ class InformationSourceTests(unittest.TestCase):
                     "replies": 3,
                 }],
             }],
-            "podcasts": [{"title": "must not be consumed"}],
         }
         blogs_payload = {
             "generatedAt": "2026-07-19T07:00:00Z",
@@ -47,13 +47,59 @@ class InformationSourceTests(unittest.TestCase):
             }],
         }
 
-        items = parse_follow_builders_payloads(x_payload, blogs_payload, now=NOW, hours=24)
+        podcasts_payload = {
+            "generatedAt": "2026-07-19T07:00:00Z",
+            "podcasts": [{
+                "name": "Training Data",
+                "title": "How AI product teams evaluate agents",
+                "guid": "episode-1",
+                "url": "https://www.youtube.com/watch?v=podcast123",
+                "publishedAt": "2026-07-09T13:00:00Z",
+                "transcript": "Host introduction. The guest explains evaluation, product loops, and deployment tradeoffs. " * 20,
+            }],
+        }
 
-        self.assertEqual([item["content_type"] for item in items], ["follow_builders", "follow_builders"])
+        items = parse_follow_builders_payloads(
+            x_payload,
+            blogs_payload,
+            podcasts_payload,
+            now=NOW,
+            hours=24,
+        )
+
+        self.assertEqual(
+            [item["content_type"] for item in items],
+            ["follow_builders", "follow_builders", "follow_builders_podcast"],
+        )
         self.assertEqual(items[0]["creator"], "Swyx")
         self.assertEqual(items[1]["summary"], "An engineering note about agent reliability.")
         self.assertNotIn("Long body", items[1]["summary"])
-        self.assertTrue(all("podcast" not in item["category"] for item in items))
+        self.assertEqual(items[2]["category"], "builder-podcast")
+        self.assertGreater(len(items[2]["transcript"]), 1000)
+        self.assertLessEqual(len(items[2]["summary"]), 1800)
+
+    def test_follow_builders_podcast_uses_fourteen_day_window(self):
+        recent = {
+            "podcasts": [{
+                "name": "Training Data",
+                "title": "Recent episode",
+                "guid": "recent",
+                "url": "https://example.com/recent",
+                "publishedAt": "2026-07-06T09:00:00Z",
+                "transcript": "Useful AI product discussion. " * 20,
+            }, {
+                "name": "Training Data",
+                "title": "Stale episode",
+                "guid": "stale",
+                "url": "https://example.com/stale",
+                "publishedAt": "2026-07-04T07:00:00Z",
+                "transcript": "Old discussion. " * 20,
+            }],
+        }
+
+        items = parse_follow_builders_payloads({}, {}, recent, now=NOW, hours=24)
+
+        self.assertEqual([item["id"] for item in items], ["recent"])
 
     def test_follow_builders_rejects_stale_or_url_less_items(self):
         payload = {
@@ -245,6 +291,14 @@ class InformationSourceTests(unittest.TestCase):
 
         self.assertEqual(canonical, "https://example.com/post?source=docs")
         self.assertEqual(canonicalize_url("https://example.com:bad/post"), "https://example.com:bad/post")
+
+    def test_youtube_episode_url_exposes_video_id_for_cross_source_dedup(self):
+        self.assertEqual(
+            youtube_video_id_from_url("https://www.youtube.com/watch?v=RKjR8DQ40po&utm_source=feed"),
+            "RKjR8DQ40po",
+        )
+        self.assertEqual(youtube_video_id_from_url("https://youtu.be/RKjR8DQ40po?t=10"), "RKjR8DQ40po")
+        self.assertEqual(youtube_video_id_from_url("https://example.com/video"), "")
 
 
 if __name__ == "__main__":

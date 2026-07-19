@@ -8,6 +8,8 @@ class MultisourceWorkflowTests(unittest.TestCase):
 
         self.assertIn("name: AI Flow Daily", workflow)
         for variable in (
+            "DAILY_ITEM_LIMIT",
+            "DAILY_VIDEO_LIMIT",
             "INFORMATION_TAKE",
             "INFORMATION_CANDIDATE_TAKE",
             "FOLLOW_BUILDERS_ENABLED",
