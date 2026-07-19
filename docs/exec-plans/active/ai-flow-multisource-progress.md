@@ -29,8 +29,9 @@
 - `git diff --check`：通过。
 - 线上只读探测（72 小时、每源最多 20 条）：AI News Radar 17 条、Follow Builders 20 条、QMReader 20 条；跨源 URL 去重后 52 条，必填字段完整。
 
-## 待完成
+## 发布
 
-- [ ] 提交并推送分支。
-- [ ] GitHub 仓库改名为 `AI-flow`。
-- [ ] 本地目录迁移为 `/Users/suda/project/coding/AI-flow`。
+- [x] 功能提交：`6d74a3f feat: evolve digest into AI Flow`。
+- [x] 分支 `codex/ai-flow-multisource` 已推送。
+- [x] GitHub 仓库已改名为 `Suda202/AI-flow`，本地 `origin` 已同步。
+- [x] 本地迁移目标 `/Users/suda/project/coding/AI-flow` 已确认无冲突；目录改名安排为发布后的最后一步。
