@@ -54,6 +54,7 @@ class PreferenceClassificationTests(unittest.TestCase):
         self.assertEqual(post.call_args.args[0], "https://api.example.test/chat/completions")
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
         self.assertEqual(kwargs["json"]["model"], "deepseek-v4-flash")
+        self.assertEqual(kwargs["json"]["thinking"], {"type": "disabled"})
 
     def test_parses_fenced_json_and_ignores_unknown_events(self):
         raw = """```json

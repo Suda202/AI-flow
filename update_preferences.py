@@ -200,6 +200,7 @@ def call_llm(prompt: str) -> str | None:
             json={
                 "model": DEEPSEEK_MODEL,
                 "max_tokens": 1024,
+                "thinking": {"type": "disabled"},
                 "messages": [{"role": "user", "content": prompt}],
             },
             timeout=60,

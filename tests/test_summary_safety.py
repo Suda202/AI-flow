@@ -80,6 +80,21 @@ class SummarySafetyTests(unittest.TestCase):
         self.assertEqual(args[0], "https://api.example.test/v1/chat/completions")
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
         self.assertEqual(kwargs["json"]["model"], "test-model")
+        self.assertEqual(kwargs["json"]["thinking"], {"type": "disabled"})
+
+    def test_call_llm_can_explicitly_enable_thinking(self):
+        response = Mock(status_code=200)
+        response.json.return_value = {
+            "choices": [{"message": {"content": "answer"}}]
+        }
+
+        with (
+            patch.object(main, "DEEPSEEK_API_KEY", "test-key"),
+            patch("main.requests.post", return_value=response) as post,
+        ):
+            self.assertEqual(main.call_llm("prompt", thinking=True), "answer")
+
+        self.assertEqual(post.call_args.kwargs["json"]["thinking"], {"type": "enabled"})
 
     def test_call_llm_retries_once_after_reasoning_only_response(self):
         reasoning_only = Mock(status_code=200)
