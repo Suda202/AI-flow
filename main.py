@@ -1428,8 +1428,13 @@ def llm_chat_completions_url() -> str:
     return f"{DEEPSEEK_API_BASE}/chat/completions"
 
 
-def call_llm(prompt: str, max_tokens: int = 1024, empty_response_retries: int = 0) -> str | None:
-    """调用 OpenAI 兼容摘要 LLM，返回文本结果"""
+def call_llm(
+    prompt: str,
+    max_tokens: int = 1024,
+    empty_response_retries: int = 0,
+    thinking: bool = False,
+) -> str | None:
+    """调用 OpenAI 兼容 LLM；短结构化任务默认关闭深度思考。"""
     if not DEEPSEEK_API_KEY:
         print("  ⚠️ LLM 未调用：DEEPSEEK_API_KEY 未配置")
         return None
@@ -1445,6 +1450,7 @@ def call_llm(prompt: str, max_tokens: int = 1024, empty_response_retries: int = 
                 json={
                     "model": DEEPSEEK_MODEL,
                     "max_tokens": max_tokens,
+                    "thinking": {"type": "enabled" if thinking else "disabled"},
                     "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=60,
