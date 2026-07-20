@@ -86,7 +86,7 @@ QMReader（RSS 元数据）─────┘
 | 推送 | 飞书开放平台应用 | tenant_access_token → 个人或群消息 |
 | 反馈 | 飞书卡片回调 + Cloudflare Worker | 所有内容的按钮点击 → GitHub data 分支 |
 | 偏好学习 | DeepSeek + 增量状态机 | 每日轻量更新，满 7 天自动归纳稳定偏好 |
-| 调度 | GitHub Actions | 通过外部定时触发 `workflow_dispatch`，避免 GitHub schedule 重复发送 |
+| 调度 | GitHub Actions | 外部 10:00 触发 + 原生 10:10 兜底；按新加坡自然日跳过重复成功运行 |
 | 去重 | history.json | 存储在 Git `data` 分支，自动清理 30 天前记录 |
 
 ## 文件结构
@@ -102,7 +102,7 @@ QMReader（RSS 元数据）─────┘
 ├── preference_state.json            # 增量偏好状态（运行时生成，保存在 data 分支）
 ├── update_preferences.py            # 分析新增反馈并生成动态排序提示
 ├── worker/                          # 飞书卡片点击反馈回调 Worker
-├── .github/workflows/digest.yml     # GitHub Actions 日报任务（外部定时触发）
+├── .github/workflows/digest.yml     # GitHub Actions 日报任务（外部触发 + 原生兜底）
 ├── FEISHU_APP_SETUP.md              # 飞书应用配置指南
 ├── GET_USER_ID.md                   # 获取飞书 User ID 指南
 └── QUICK_START.md                   # 快速开始
@@ -149,8 +149,8 @@ QMReader（RSS 元数据）─────┘
 
 1. Fork 本仓库
 2. Settings → Secrets → Actions → 添加必填环境变量（FEISHU_APP_ID, FEISHU_APP_SECRET, DEEPSEEK_API_KEY, YOUTUBE_API_KEY），并配置 `FEISHU_CHAT_ID` 或 `FEISHU_USER_ID`；如需覆盖默认模型，可额外配置 `DEEPSEEK_API_BASE`、`DEEPSEEK_MODEL`
-3. Actions → AI Flow Daily → Run workflow 手动测试
-4. 配置外部定时器每天触发 `workflow_dispatch`；不要同时启用 GitHub `schedule`，避免同一天重复发送
+3. Actions → AI Flow Daily → Run workflow 手动测试；同一天需要再次执行时启用 `force`
+4. 工作流每天 10:10（新加坡时间）原生兜底；若外部定时器已在 10:00 成功触发，当天兜底运行会自动跳过发送
 5. `history.json`、`feedback.json` 和 `preference_state.json` 自动保存在 `data` 分支，用于跨次去重与持续偏好学习
 6. 如需点击反馈，部署 `worker/` 并在飞书开放平台配置卡片回调地址
 
