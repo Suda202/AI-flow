@@ -59,6 +59,7 @@ DAILY_ITEM_LIMIT = env_int("DAILY_ITEM_LIMIT", 7, min_value=1, max_value=7)
 DAILY_VIDEO_LIMIT = env_int("DAILY_VIDEO_LIMIT", 3, min_value=1, max_value=3)
 TOP_N = env_int("TOP_N", 3, min_value=1, max_value=DAILY_VIDEO_LIMIT)  # 每日深度视频上限
 SUMMARY_MAX_TOKENS = env_int("SUMMARY_MAX_TOKENS", 700, min_value=100)
+RANKING_MAX_TOKENS = env_int("RANKING_MAX_TOKENS", 1200, min_value=500)
 SUMMARY_MAX_CHARS = env_int("SUMMARY_MAX_CHARS", 700, min_value=100)
 INFORMATION_TITLE_MAX_CHARS = 45
 INFORMATION_SUMMARY_MAX_CHARS = 220
@@ -1380,61 +1381,140 @@ def llm_chat_completions_url() -> str:
     return f"{DEEPSEEK_API_BASE}/chat/completions"
 
 
-def call_llm(prompt: str, max_tokens: int = 1024) -> str | None:
+def call_llm(prompt: str, max_tokens: int = 1024, empty_response_retries: int = 0) -> str | None:
     """调用 OpenAI 兼容摘要 LLM，返回文本结果"""
     if not DEEPSEEK_API_KEY:
+        print("  ⚠️ LLM 未调用：DEEPSEEK_API_KEY 未配置")
         return None
-    try:
-        resp = requests.post(
-            llm_chat_completions_url(),
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": DEEPSEEK_MODEL,
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=60,
-        )
-        data = resp.json()
-        if data.get("error"):
-            error = data.get("error", {})
-            print(f"  ⚠️ LLM error: {error.get('message', str(error))}")
+    retry_count = max(0, empty_response_retries)
+    for attempt in range(retry_count + 1):
+        try:
+            resp = requests.post(
+                llm_chat_completions_url(),
+                headers={
+                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": DEEPSEEK_MODEL,
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=60,
+            )
+            status_code = getattr(resp, "status_code", 200)
+            try:
+                data = resp.json()
+            except (TypeError, ValueError) as error:
+                print(f"  ⚠️ LLM 响应不是有效 JSON: status={status_code}, error={type(error).__name__}")
+                return None
+
+            if isinstance(data, dict) and data.get("error"):
+                error = data.get("error", {})
+                message = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+                print(f"  ⚠️ LLM error: {message}")
+                return None
+            if isinstance(status_code, int) and status_code >= 400:
+                print(f"  ⚠️ LLM HTTP error: {status_code}")
+                return None
+
+            if isinstance(data, dict):
+                choices = data.get("choices", [])
+                if isinstance(choices, list):
+                    for choice in choices:
+                        if not isinstance(choice, dict):
+                            continue
+                        message = choice.get("message", {})
+                        if isinstance(message, dict):
+                            text = extract_llm_content_text(message.get("content"))
+                            if text:
+                                return text
+                        text = choice.get("text")
+                        if isinstance(text, str) and text.strip():
+                            return text.strip()
+
+                content = data.get("content", [])
+                text = extract_llm_content_text(content)
+                if text:
+                    return text
+
+                for key in ("text", "completion"):
+                    text = data.get(key)
+                    if isinstance(text, str) and text.strip():
+                        return text.strip()
+
+            print(f"  ⚠️ LLM 无可见正文: {describe_llm_response_shape(data, status_code)}")
+            if attempt < retry_count:
+                print(f"  ↻ LLM 空正文，重试 {attempt + 1}/{retry_count}")
+                continue
             return None
-        status_code = getattr(resp, "status_code", 200)
-        if isinstance(status_code, int) and status_code >= 400:
-            print(f"  ⚠️ LLM HTTP error: {status_code}")
+        except Exception as e:
+            print(f"  ⚠️ LLM call failed: {e}")
             return None
+    return None
 
-        choices = data.get("choices", [])
-        if isinstance(choices, list):
-            for choice in choices:
-                if not isinstance(choice, dict):
-                    continue
-                message = choice.get("message", {})
-                if isinstance(message, dict):
-                    text = extract_llm_content_text(message.get("content"))
-                    if text:
-                        return text
-                text = choice.get("text")
-                if isinstance(text, str) and text.strip():
-                    return text.strip()
 
-        content = data.get("content", [])
-        text = extract_llm_content_text(content)
-        if text:
-            return text
+def describe_llm_response_shape(data, status_code=200) -> str:
+    """Return safe response metadata without logging prompts, model output, or credentials."""
+    parts = [f"status={status_code}"]
+    if not isinstance(data, dict):
+        parts.append(f"body_type={type(data).__name__}")
+        return ", ".join(parts)
 
-        for key in ("text", "completion"):
-            text = data.get(key)
-            if isinstance(text, str) and text.strip():
-                return text
-        return None
-    except Exception as e:
-        print(f"  ⚠️ LLM call failed: {e}")
-        return None
+    choices = data.get("choices")
+    if isinstance(choices, list):
+        parts.append(f"choices={len(choices)}")
+        finish_reasons = []
+        content_types = []
+        reasoning_present = False
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            finish_reason = choice.get("finish_reason")
+            if isinstance(finish_reason, str) and finish_reason:
+                finish_reasons.append(finish_reason[:40])
+            message = choice.get("message")
+            if not isinstance(message, dict):
+                continue
+            reasoning = message.get("reasoning_content")
+            reasoning_present = reasoning_present or bool(reasoning)
+            content = message.get("content")
+            if isinstance(content, str):
+                content_types.append("text" if content.strip() else "empty")
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and isinstance(block.get("type"), str):
+                        content_types.append(block["type"][:40])
+                    else:
+                        content_types.append(type(block).__name__)
+            elif content is not None:
+                content_types.append(type(content).__name__)
+        if finish_reasons:
+            parts.append(f"finish_reason={'+'.join(dict.fromkeys(finish_reasons))}")
+        if content_types:
+            parts.append(f"content_types={'+'.join(dict.fromkeys(content_types))}")
+        if reasoning_present:
+            parts.append("reasoning_content=present")
+
+    top_content = data.get("content")
+    if isinstance(top_content, list):
+        block_types = [
+            block.get("type", type(block).__name__) if isinstance(block, dict) else type(block).__name__
+            for block in top_content
+        ]
+        if block_types:
+            parts.append(f"top_content_types={'+'.join(str(value)[:40] for value in dict.fromkeys(block_types))}")
+
+    usage = data.get("usage")
+    if isinstance(usage, dict):
+        usage_parts = []
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = usage.get(key)
+            if isinstance(value, (int, float)):
+                usage_parts.append(f"{key}:{value}")
+        if usage_parts:
+            parts.append(f"usage={'+'.join(usage_parts)}")
+    return ", ".join(parts)
 
 
 def extract_llm_content_text(content) -> str:
@@ -1548,7 +1628,7 @@ def rank_candidates(candidates: list[dict], top_n: int, profile: dict) -> list[d
 
 最多输出 {top_n} 行，不要其他文字。"""
 
-    result = call_llm(prompt, max_tokens=500)
+    result = call_llm(prompt, max_tokens=RANKING_MAX_TOKENS, empty_response_retries=1)
     if not result:
         print("  ⚠️ DeepSeek 排序失败，回退到播放量排序")
         candidates.sort(key=lambda v: v["view_count"], reverse=True)

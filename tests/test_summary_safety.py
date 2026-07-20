@@ -81,6 +81,78 @@ class SummarySafetyTests(unittest.TestCase):
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
         self.assertEqual(kwargs["json"]["model"], "test-model")
 
+    def test_call_llm_retries_once_after_reasoning_only_response(self):
+        reasoning_only = Mock(status_code=200)
+        reasoning_only.json.return_value = {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "internal reasoning",
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 800, "completion_tokens": 1200},
+        }
+        completed = Mock(status_code=200)
+        completed.json.return_value = {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "1|值得观看"},
+                }
+            ]
+        }
+
+        with (
+            patch.object(main, "DEEPSEEK_API_KEY", "test-key"),
+            patch("main.requests.post", side_effect=[reasoning_only, completed]) as post,
+            patch("builtins.print") as output,
+        ):
+            result = main.call_llm("prompt", max_tokens=1200, empty_response_retries=1)
+
+        self.assertEqual(result, "1|值得观看")
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_args_list[0].kwargs["json"]["max_tokens"], 1200)
+        logs = "\n".join(str(call.args[0]) for call in output.call_args_list)
+        self.assertIn("finish_reason=length", logs)
+        self.assertIn("reasoning_content=present", logs)
+        self.assertIn("重试 1/1", logs)
+
+    def test_call_llm_does_not_retry_api_error(self):
+        response = Mock(status_code=401)
+        response.json.return_value = {"error": {"message": "invalid credentials"}}
+
+        with (
+            patch.object(main, "DEEPSEEK_API_KEY", "test-key"),
+            patch("main.requests.post", return_value=response) as post,
+        ):
+            result = main.call_llm("prompt", empty_response_retries=1)
+
+        self.assertIsNone(result)
+        post.assert_called_once()
+
+    def test_rank_candidates_uses_larger_budget_and_empty_response_retry(self):
+        candidates = [
+            {
+                "author": "Example",
+                "title": "AI product strategy",
+                "duration_str": "20:00",
+                "view_count": 5000,
+                "description": "A detailed product strategy discussion.",
+            }
+        ]
+
+        with patch.object(main, "call_llm", return_value="1|产品策略复盘") as call_llm:
+            result = main.rank_candidates(candidates, 1, {})
+
+        self.assertEqual(result, [{"index": 0, "reason": "产品策略复盘"}])
+        call_llm.assert_called_once()
+        self.assertEqual(call_llm.call_args.kwargs["max_tokens"], main.RANKING_MAX_TOKENS)
+        self.assertEqual(call_llm.call_args.kwargs["empty_response_retries"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
