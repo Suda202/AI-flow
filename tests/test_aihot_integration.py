@@ -58,6 +58,68 @@ class AihotIntegrationTests(unittest.TestCase):
 
         self.assertEqual([item["id"] for item in selected], ["agent-workflow"])
         call_llm.assert_called_once()
+        self.assertEqual(
+            call_llm.call_args.kwargs["max_tokens"],
+            main.INFORMATION_SELECTION_MAX_TOKENS,
+        )
+        self.assertEqual(call_llm.call_args.kwargs["empty_response_retries"], 1)
+
+    def test_information_selection_prompt_keeps_candidates_sources_and_summary_segments(self):
+        long_summary = (
+            "BEGIN_CORE "
+            + "a" * 1800
+            + " MIDDLE_CORE "
+            + "b" * 1800
+            + " END_CORE"
+        )
+        sources = ["follow_builders", "ai_news_radar", "qmreader"]
+        items = [
+            {
+                "id": f"item-{index}",
+                "title": f"Candidate {index}",
+                "summary": long_summary if index == 0 else f"Summary {index}",
+                "source": f"Source {index}",
+                "content_type": sources[index % len(sources)],
+                "score": 90 - index,
+                "match_tags": ["Agent", "Product"],
+            }
+            for index in range(35)
+        ]
+
+        prompt_items = main.build_information_selection_prompt_items(items)
+
+        self.assertEqual(len(prompt_items), 35)
+        self.assertEqual(
+            {item["content_type"] for item in prompt_items},
+            set(sources),
+        )
+        compact_summary = prompt_items[0]["summary"]
+        self.assertLessEqual(len(compact_summary), main.INFORMATION_SELECTION_SUMMARY_MAX_CHARS)
+        self.assertIn("BEGIN_CORE", compact_summary)
+        self.assertIn("MIDDLE_CORE", compact_summary)
+        self.assertIn("END_CORE", compact_summary)
+
+    def test_information_selection_logs_rule_fallback_explicitly(self):
+        items = [{
+            "id": "agent-workflow",
+            "title": "Agentic Engineering workflow for coding agents",
+            "summary": "A practical workflow for AI product teams.",
+            "source": "Example",
+            "category": "ai-products",
+            "score": 88,
+            "url": "https://example.com/agent-workflow",
+        }]
+
+        with (
+            mock.patch.object(main, "DEEPSEEK_API_KEY", "test-key"),
+            mock.patch.object(main, "call_llm", return_value=None),
+            mock.patch("builtins.print") as output,
+        ):
+            selected = main.select_aihot_items_for_profile(items, take=1)
+
+        self.assertEqual([item["id"] for item in selected], ["agent-workflow"])
+        logs = "\n".join(str(call.args[0]) for call in output.call_args_list)
+        self.assertIn("多源信息 LLM 筛选失败，使用规则筛选", logs)
 
     def test_external_selection_ids_are_namespaced(self):
         items = [
