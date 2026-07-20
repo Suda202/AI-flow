@@ -1,4 +1,5 @@
 import inspect
+import json
 import math
 import unittest
 from unittest import mock
@@ -666,6 +667,145 @@ class AihotIntegrationTests(unittest.TestCase):
 
         self.assertIn("LATE_UNIQUE_INSIGHT", call_llm.call_args.args[0])
         self.assertEqual(localized[0]["title"], "智能体评估访谈")
+
+    def test_localization_retries_batch_omissions_per_item(self):
+        items = [
+            {
+                "id": "episode-1",
+                "title": "Stripe's AI Chief: How AI Agents Will Buy, Sell, and Pay",
+                "summary": "Speaker 1 | 00:00 Fraudsters steal tokens. " * 40,
+                "transcript": "Speaker 1 | 00:00 Fraudsters steal tokens. " * 400,
+                "url": "https://example.com/podcast",
+                "source": "Training Data",
+                "content_type": "follow_builders_podcast",
+            },
+            {
+                "id": "post-1",
+                "title": "Thariq: if you've run into this, please restart Claude Code",
+                "summary": "If you've run into this, please restart Claude Code; the fix should be propagating.",
+                "url": "https://example.com/post",
+                "source": "Thariq",
+                "content_type": "follow_builders",
+            },
+        ]
+        batch_response = (
+            '{"items":[{"id":"follow_builders:post-1",'
+            '"title":"Claude Code 修复正在逐步发布",'
+            '"summary":"遇到该问题时请重启 Claude Code，修复正在逐步生效。"}]}'
+        )
+        podcast_retry = (
+            '{"items":[{"id":"follow_builders_podcast:episode-1",'
+            '"title":"Stripe AI 负责人谈智能体商业",'
+            '"summary":"智能体支付需要解决授权、超支和令牌滥用问题，并将逐步参与企业经营。"}]}'
+        )
+
+        with mock.patch.object(main, "DEEPSEEK_API_KEY", "configured"), mock.patch.object(
+            main,
+            "call_llm",
+            side_effect=[batch_response, podcast_retry],
+        ) as call_llm:
+            localized = main.localize_information_items(items)
+
+        self.assertEqual(call_llm.call_count, 2)
+        self.assertEqual([item["id"] for item in localized], ["episode-1", "post-1"])
+        self.assertTrue(all(main.contains_chinese(item["title"]) for item in localized))
+        self.assertTrue(all(main.contains_chinese(item["summary"]) for item in localized))
+
+    def test_localization_retries_non_chinese_output_then_uses_chinese(self):
+        item = {
+            "id": "post-1",
+            "title": "Claude Code fix",
+            "summary": "Restart Claude Code and wait for the fix to propagate.",
+            "url": "https://example.com/post",
+            "source": "Thariq",
+            "content_type": "follow_builders",
+        }
+        english_response = (
+            '{"items":[{"id":"follow_builders:post-1",'
+            '"title":"Claude Code fix",'
+            '"summary":"Restart Claude Code and wait for the fix."}]}'
+        )
+        chinese_response = (
+            '{"items":[{"id":"follow_builders:post-1",'
+            '"title":"Claude Code 修复正在发布",'
+            '"summary":"遇到问题时请重启 Claude Code，修复会逐步生效。"}]}'
+        )
+
+        with mock.patch.object(main, "DEEPSEEK_API_KEY", "configured"), mock.patch.object(
+            main,
+            "call_llm",
+            side_effect=[english_response, chinese_response],
+        ) as call_llm:
+            localized = main.localize_information_items([item])
+
+        self.assertEqual(call_llm.call_count, 2)
+        self.assertEqual(localized[0]["title"], "Claude Code 修复正在发布")
+
+    def test_localization_drops_untranslated_item_instead_of_leaking_raw_text(self):
+        item = {
+            "id": "episode-1",
+            "title": "Long English podcast",
+            "summary": "Speaker 1 | 00:00 raw transcript " * 80,
+            "transcript": "Speaker 1 | 00:00 raw transcript " * 800,
+            "url": "https://example.com/podcast",
+            "source": "Training Data",
+            "content_type": "follow_builders_podcast",
+        }
+
+        with mock.patch.object(main, "DEEPSEEK_API_KEY", "configured"), mock.patch.object(
+            main,
+            "call_llm",
+            return_value=None,
+        ) as call_llm:
+            localized = main.localize_information_items([item])
+
+        self.assertEqual(call_llm.call_count, 2)
+        self.assertEqual(localized, [])
+
+    def test_localization_handles_missing_summary_and_enforces_card_limits(self):
+        item = {
+            "id": "post-1",
+            "title": "Claude Code 修复",
+            "summary": "",
+            "url": "https://example.com/post",
+            "source": "Thariq",
+            "content_type": "follow_builders",
+        }
+        response = json.dumps({
+            "items": [{
+                "id": "follow_builders:post-1",
+                "title": "中" * 60,
+                "summary": "文" * 260,
+            }],
+        }, ensure_ascii=False)
+
+        with mock.patch.object(main, "DEEPSEEK_API_KEY", "configured"), mock.patch.object(
+            main,
+            "call_llm",
+            return_value=response,
+        ) as call_llm:
+            localized = main.localize_information_items([item])
+
+        call_llm.assert_called_once()
+        self.assertEqual(len(localized[0]["title"]), 45)
+        self.assertEqual(len(localized[0]["summary"]), 220)
+
+    def test_localization_enforces_limits_for_existing_chinese_content(self):
+        item = {
+            "id": "radar-1",
+            "title": "中文标题" * 20,
+            "summary": "中文摘要" * 80,
+            "url": "https://example.com/radar",
+            "source": "AI News Radar",
+            "content_type": "ai_news_radar",
+        }
+
+        with mock.patch.object(main, "call_llm") as call_llm:
+            localized = main.localize_information_items([item])
+
+        call_llm.assert_not_called()
+        self.assertEqual(len(localized[0]["title"]), 45)
+        self.assertEqual(len(localized[0]["summary"]), 220)
 
     def test_main_marks_only_successfully_delivered_information(self):
         delivered = {"id": "sent", "title": "Sent", "url": "https://example.com/sent"}
