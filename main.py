@@ -60,9 +60,16 @@ DAILY_VIDEO_LIMIT = env_int("DAILY_VIDEO_LIMIT", 3, min_value=1, max_value=3)
 TOP_N = env_int("TOP_N", 3, min_value=1, max_value=DAILY_VIDEO_LIMIT)  # 每日深度视频上限
 SUMMARY_MAX_TOKENS = env_int("SUMMARY_MAX_TOKENS", 700, min_value=100)
 RANKING_MAX_TOKENS = env_int("RANKING_MAX_TOKENS", 1200, min_value=500)
+INFORMATION_SELECTION_MAX_TOKENS = env_int(
+    "INFORMATION_SELECTION_MAX_TOKENS",
+    2400,
+    min_value=1024,
+)
 SUMMARY_MAX_CHARS = env_int("SUMMARY_MAX_CHARS", 700, min_value=100)
 INFORMATION_TITLE_MAX_CHARS = 45
 INFORMATION_SUMMARY_MAX_CHARS = 220
+INFORMATION_SELECTION_TITLE_MAX_CHARS = 180
+INFORMATION_SELECTION_SUMMARY_MAX_CHARS = 1200
 INFORMATION_LOCALIZATION_CONTENT_MAX_CHARS = 18000
 LOOKBACK_HOURS = env_int("LOOKBACK_HOURS", 24, min_value=1)
 AIHOT_ENABLED = env_bool("AIHOT_ENABLED", True)
@@ -767,16 +774,7 @@ def select_aihot_items_for_profile(
     if not DEEPSEEK_API_KEY or not deterministic:
         return diversify_information_items(deterministic, item_limit)
 
-    prompt_items = [{
-        **{
-            key: item.get(key)
-            for key in (
-                "title", "summary", "source", "content_type", "score",
-                "source_count", "match_tags", "selection_lane",
-            )
-        },
-        "id": information_selection_id(item),
-    } for item in deterministic]
+    prompt_items = build_information_selection_prompt_items(deterministic)
     prompt = f"""从 AI Flow 的多源候选中选出真正值得给该用户看的内容。宁缺毋滥，可以返回空数组，最多 {item_limit} 条。
 优先：Agent/Agentic Engineering/Loop Engineering、硅谷正在流行的前沿趋势、有实际产品或商业价值的深度内容。
 保留 Agent 实战教程；排除普通 API/安装教程、节日营销、软广、转售拼接新闻和低信息量内容。
@@ -790,14 +788,63 @@ def select_aihot_items_for_profile(
 只返回 JSON：{{"selected_ids":["id"]}}
 """
     selected_ids = parse_aihot_selection_response(
-        call_llm(prompt),
+        call_llm(
+            prompt,
+            max_tokens=INFORMATION_SELECTION_MAX_TOKENS,
+            empty_response_retries=1,
+        ),
         {information_selection_id(item) for item in deterministic},
     )
     if selected_ids is None:
+        print("  ⚠️ 多源信息 LLM 筛选失败，使用规则筛选")
         return diversify_information_items(deterministic, item_limit)
+    print(f"  ✅ 多源信息 LLM 筛选成功: {len(selected_ids)} 条")
     by_id = {information_selection_id(item): item for item in deterministic}
     selected = [by_id[item_id] for item_id in selected_ids]
     return diversify_information_items(selected, item_limit)
+
+
+def compact_information_selection_text(value: object, max_chars: int) -> str:
+    """Keep beginning, middle, and conclusion signals when unusually long text is compacted."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) <= max_chars:
+        return text
+    separator = " …[中段]… "
+    segment_chars = max(1, (max_chars - len(separator) * 2) // 3)
+    middle_start = max(0, len(text) // 2 - segment_chars // 2)
+    compacted = separator.join((
+        text[:segment_chars],
+        text[middle_start:middle_start + segment_chars],
+        text[-segment_chars:],
+    ))
+    return compacted[:max_chars]
+
+
+def build_information_selection_prompt_items(items: list[dict]) -> list[dict]:
+    """Build a bounded, high-fidelity selection prompt without dropping candidates."""
+    prompt_items = []
+    for item in items:
+        match_tags = item.get("match_tags")
+        if isinstance(match_tags, list):
+            match_tags = [str(tag)[:50] for tag in match_tags[:10]]
+        prompt_items.append({
+            "id": information_selection_id(item),
+            "title": compact_information_selection_text(
+                item.get("title"),
+                INFORMATION_SELECTION_TITLE_MAX_CHARS,
+            ),
+            "summary": compact_information_selection_text(
+                item.get("summary"),
+                INFORMATION_SELECTION_SUMMARY_MAX_CHARS,
+            ),
+            "source": compact_information_selection_text(item.get("source"), 160),
+            "content_type": item.get("content_type"),
+            "score": item.get("score"),
+            "source_count": item.get("source_count"),
+            "match_tags": match_tags,
+            "selection_lane": item.get("selection_lane"),
+        })
+    return prompt_items
 
 
 def contains_chinese(value: object) -> bool:
