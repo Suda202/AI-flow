@@ -1,33 +1,93 @@
 name: AI Flow Daily
 
 on:
-  workflow_dispatch: # 外部定时触发 + 手动触发，避免和 GitHub schedule 重复发送
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Ignore the daily success guard and run again
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: '10 2 * * *' # 10:10 Singapore time; fallback for the external 10:00 trigger
 
 concurrency:
   group: ai-flow
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
   digest:
     runs-on: ubuntu-latest
     steps:
+      - name: Check for successful run today
+        id: daily_guard
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const input = context.payload.inputs?.force;
+            const force = input === true || input === "true";
+            if (context.eventName === "workflow_dispatch" && force) {
+              core.info("Force enabled; bypassing the daily success guard.");
+              core.setOutput("should_run", "true");
+              return;
+            }
+
+            const singaporeOffsetMs = 8 * 60 * 60 * 1000;
+            const singaporeNow = new Date(Date.now() + singaporeOffsetMs);
+            const startUtcMs = Date.UTC(
+              singaporeNow.getUTCFullYear(),
+              singaporeNow.getUTCMonth(),
+              singaporeNow.getUTCDate(),
+            ) - singaporeOffsetMs;
+
+            const response = await github.request(
+              "GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs",
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "digest.yml",
+                branch: "main",
+                status: "completed",
+                per_page: 100,
+              },
+            );
+            const previousSuccess = response.data.workflow_runs.find((run) =>
+              run.id !== context.runId &&
+              run.conclusion === "success" &&
+              new Date(run.created_at).getTime() >= startUtcMs
+            );
+
+            if (previousSuccess) {
+              core.notice(`Daily digest already succeeded: ${previousSuccess.html_url}`);
+              core.setOutput("should_run", "false");
+              return;
+            }
+
+            core.info("No successful digest found for today in Singapore time.");
+            core.setOutput("should_run", "true");
+
       - uses: actions/checkout@v4
+        if: steps.daily_guard.outputs.should_run == 'true'
 
       - name: Set up Python
+        if: steps.daily_guard.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install dependencies
+        if: steps.daily_guard.outputs.should_run == 'true'
         run: |
           pip install -r requirements.txt
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> $GITHUB_PATH
 
       - name: Restore data from data branch
+        if: steps.daily_guard.outputs.should_run == 'true'
         continue-on-error: true
         run: |
           git fetch origin data 2>/dev/null || true
@@ -42,9 +102,11 @@ jobs:
           [ -f ranking_hints.txt ] || echo '' > ranking_hints.txt
 
       - name: Restore YouTube cookies
+        if: steps.daily_guard.outputs.should_run == 'true'
         run: echo "${{ secrets.YT_COOKIES_BASE64 }}" | base64 -d > cookies.txt
 
       - name: Analyze feedback and update preferences
+        if: steps.daily_guard.outputs.should_run == 'true'
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_API_BASE: ${{ secrets.DEEPSEEK_API_BASE }}
@@ -52,6 +114,7 @@ jobs:
         run: python update_preferences.py
 
       - name: Run digest
+        if: steps.daily_guard.outputs.should_run == 'true'
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
@@ -78,6 +141,7 @@ jobs:
         run: python main.py
 
       - name: Save data to data branch
+        if: steps.daily_guard.outputs.should_run == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
