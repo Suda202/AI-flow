@@ -1,0 +1,239 @@
+{
+  "schema_version": 1,
+  "processed_events": {
+    "d7e7ed93fcbd9fa7694c85e7a33709808a4496d042870568f9501ceb8cfe5e19": "2026-05-19T16:16:43.976Z",
+    "ca815b09a0f88933cf7af52bfb153ef72829e9d292e45adfdbd29a418765ab2c": "2026-05-19T17:26:06.257Z",
+    "09d158013be68e3f3b91e061fd3f5c611438876467b4349f8014ea3a4fd3df9a": "2026-05-19T17:26:08.825Z",
+    "ee830b6cb95f46bb8a2d1864f22bce6b73101029a2882055ba66dcff9c562b4a": "2026-05-20T16:15:54.720Z",
+    "35c415fc0eaa597dbdb97a644279675ec4e68e8215a442db74345df168904f79": "2026-05-23T03:56:53.640Z",
+    "0641b67bc5af772a2cd29556913399f0e9c54a96e1865995e3db93067639261a": "2026-05-23T03:57:22.545Z",
+    "97a46476face908968d8934ac65295d970fc1d5963e8b8f80f25c6df23fd7c72": "2026-06-18T14:52:57.139Z",
+    "65949cf143086a4a258ff0026cc42d806b144eeebb0a500e6611db570ea01b1b": "2026-06-18T14:53:14.349Z",
+    "04a4dc7bc2366c65afab25dea086d9795064adb582213c8332198b8a98a156b1": "2026-06-18T14:53:18.499Z",
+    "2b9f79ed3f8fb82facde8d2ddfc1cb8c7995d8d3c283e23dca75db5cdfa9c627": "2026-06-18T14:53:21.440Z",
+    "17129dccd721df9486a7ba62e720d8e81f8dc76a6488dc3cbff46bcf0e818e73": "2026-06-23T13:16:37.527Z",
+    "3d63b7cf61d5434bc30e732f1558c70d576d65ce0e0f66495d0ee2c229541193": "2026-06-23T13:16:43.930Z",
+    "aedb4a457c1ab20e039e9b04b9727f717e6acb319663ca24a277ca08976851f4": "2026-07-01T01:18:25.049Z",
+    "5ce2d587408c6b30da9d237a4945f0c216eb2b97af4b0862895aba5f2350f066": "2026-07-01T01:18:35.814Z",
+    "8df03e957939d2487153afd1ad6809d88c60105be53a7c20248aabbaa721592b": "2026-07-01T01:18:50.737Z",
+    "e964c843fda311c0434406c39c8c2ddb8122610372e0b0889a31d623cc5a8b86": "2026-07-01T01:18:57.651Z",
+    "b7f09286b754b7a649d7b04ad0a628b8d3bd65825ba71e90df5179786361a187": "2026-07-01T01:19:10.734Z",
+    "376cecfcf3d3d9ce15e3cb83eb6ea3b9551c86127366260b96d4dfcc4c37038e": "2026-07-01T01:19:34.450Z",
+    "25211dbffa3dddc0cebdb6cc9fdb3df1eda8a54e6923b4f9c7bf170ffab00997": "2026-07-20T02:08:27.293Z",
+    "fe30b756e8546830d92a4b63b7ff10978f7bc4630c74f630659f1f61297fc68b": "2026-07-20T02:08:35.791Z",
+    "2c09a9afe10e796310e4c8e8c7254a542ced604c8ea2c42947f12bf41bf26697": "2026-07-20T02:09:01.782Z",
+    "3fc8976bc34d928d849b7044533d5f89f299fc6bbee466fa30272e3113be1d05": "2026-07-20T02:09:06.234Z",
+    "73540aa4b2dafadc93633ad7e3f21f60625d24b98bd076ce695c5dffd0f7a732": "2026-07-20T02:09:14.134Z",
+    "310717bfe28090f984483477deb83959c23ea56d4a39f8ae09073f61deb4f284": "2026-07-21T13:16:33.594Z",
+    "518feaf5934a982287b2241e9e2a634367d8d4de3823e7ec3275924e70d4301b": "2026-07-21T13:16:40.775Z",
+    "f38f0424fa5652f32655646521903c985909f437d3552698f140f941b7c50fb6": "2026-07-21T13:16:52.275Z",
+    "50251966e077af039f1282a98a43f75a429caaca9fd3b2b89eb0062db6907a28": "2026-07-21T13:16:57.096Z"
+  },
+  "short_term": {
+    "topics": {
+      "AI安全": {
+        "net": -0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "1EZdpEhwmNc"
+        ],
+        "last_seen": "2026-07-21T13:16:52.275Z"
+      },
+      "Agent架构": {
+        "net": -0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "1EZdpEhwmNc"
+        ],
+        "last_seen": "2026-07-21T13:16:52.275Z"
+      },
+      "决策分析": {
+        "net": -0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "1EZdpEhwmNc"
+        ],
+        "last_seen": "2026-07-21T13:16:52.275Z"
+      },
+      "网络安全": {
+        "net": -0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "1EZdpEhwmNc"
+        ],
+        "last_seen": "2026-07-21T13:16:52.275Z"
+      },
+      "AI职业": {
+        "net": 0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "zXysLUTLjw4"
+        ],
+        "last_seen": "2026-07-21T13:16:57.096Z"
+      },
+      "高收入岗位": {
+        "net": 0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "zXysLUTLjw4"
+        ],
+        "last_seen": "2026-07-21T13:16:57.096Z"
+      },
+      "FDE": {
+        "net": 0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "zXysLUTLjw4"
+        ],
+        "last_seen": "2026-07-21T13:16:57.096Z"
+      },
+      "商业化": {
+        "net": 0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "zXysLUTLjw4"
+        ],
+        "last_seen": "2026-07-21T13:16:57.096Z"
+      }
+    },
+    "formats": {
+      "技术演讲": {
+        "net": -0.81,
+        "evidence_count": 3,
+        "content_ids": [
+          "fnLBmfsI_Fg",
+          "1EZdpEhwmNc"
+        ],
+        "last_seen": "2026-07-21T13:16:52.275Z"
+      },
+      "Builder短观点": {
+        "net": 0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "zXysLUTLjw4"
+        ],
+        "last_seen": "2026-07-21T13:16:57.096Z"
+      }
+    },
+    "values": {
+      "实用方法": {
+        "net": 0.81,
+        "evidence_count": 3,
+        "content_ids": [
+          "fnLBmfsI_Fg",
+          "zXysLUTLjw4"
+        ],
+        "last_seen": "2026-07-21T13:16:57.096Z"
+      },
+      "深度洞察": {
+        "net": -0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "1EZdpEhwmNc"
+        ],
+        "last_seen": "2026-07-21T13:16:52.275Z"
+      }
+    },
+    "sources": {
+      "AI Engineer": {
+        "net": -0.81,
+        "evidence_count": 3,
+        "content_ids": [
+          "fnLBmfsI_Fg",
+          "1EZdpEhwmNc"
+        ],
+        "last_seen": "2026-07-21T13:16:52.275Z"
+      },
+      "Manoj Nair": {
+        "net": -0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "1EZdpEhwmNc"
+        ],
+        "last_seen": "2026-07-21T13:16:52.275Z"
+      },
+      "Snyk": {
+        "net": -0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "1EZdpEhwmNc"
+        ],
+        "last_seen": "2026-07-21T13:16:52.275Z"
+      },
+      "Greg Isenberg": {
+        "net": 0.81,
+        "evidence_count": 1,
+        "content_ids": [
+          "zXysLUTLjw4"
+        ],
+        "last_seen": "2026-07-21T13:16:57.096Z"
+      }
+    }
+  },
+  "long_term": {
+    "topics": {},
+    "formats": {},
+    "values": {},
+    "sources": {
+      "Chris Williamson": {
+        "net": -2.0,
+        "evidence_count": 2,
+        "content_ids": [
+          "U0GSejBI_Bg",
+          "ibtTcdyMc5Q"
+        ],
+        "last_seen": "2026-07-20T02:09:01.782Z"
+      }
+    }
+  },
+  "last_daily_run": "2026-07-24T05:29:01Z",
+  "last_weekly_run": "2026-07-20T13:10:06Z",
+  "weekly_snapshots": [
+    {
+      "created_at": "2026-06-29T02:00:38Z",
+      "long_term": {
+        "topics": {},
+        "formats": {},
+        "values": {},
+        "sources": {}
+      }
+    },
+    {
+      "created_at": "2026-07-06T02:00:43Z",
+      "long_term": {
+        "topics": {},
+        "formats": {},
+        "values": {},
+        "sources": {}
+      }
+    },
+    {
+      "created_at": "2026-07-13T02:00:59Z",
+      "long_term": {
+        "topics": {},
+        "formats": {},
+        "values": {},
+        "sources": {}
+      }
+    },
+    {
+      "created_at": "2026-07-20T13:10:06Z",
+      "long_term": {
+        "topics": {},
+        "formats": {},
+        "values": {},
+        "sources": {
+          "Chris Williamson": {
+            "net": -2.0,
+            "evidence_count": 2,
+            "content_ids": [
+              "U0GSejBI_Bg",
+              "ibtTcdyMc5Q"
+            ],
+            "last_seen": "2026-07-20T02:09:01.782Z"
+          }
+        }
+      }
+    }
+  ]
+}
