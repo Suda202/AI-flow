@@ -8,8 +8,6 @@ on:
         required: false
         type: boolean
         default: false
-  schedule:
-    - cron: '10 2 * * *' # 10:10 Singapore time; fallback for the external 10:00 trigger
 
 concurrency:
   group: ai-flow
