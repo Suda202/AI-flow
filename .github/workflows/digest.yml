@@ -20,7 +20,9 @@ permissions:
   contents: write
 
 jobs:
+  # Paused on 2026-08-15: stop all AI Flow deliveries to Feishu.
   digest:
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Check for successful run today
